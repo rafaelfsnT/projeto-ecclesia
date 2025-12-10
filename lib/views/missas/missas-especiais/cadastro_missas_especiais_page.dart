@@ -1,9 +1,10 @@
-import '/services/missa_service.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import '/services/liturgia_service.dart';
-import '/widgets/app/app_scaffold.dart';
+import '../../../app/utils/helpers/feedbacks_helper.dart';
+import '../../../services/liturgia_service.dart';
+import '../../../services/missa_service.dart';
+import '../../../widgets/app/app_scaffold.dart';
 
 class CadastroMissaEspecialPage extends StatefulWidget {
   const CadastroMissaEspecialPage({super.key});
@@ -15,19 +16,18 @@ class CadastroMissaEspecialPage extends StatefulWidget {
 
 class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
   final _formKey = GlobalKey<FormState>();
-  DateTime? dataSelecionada; // Mantém data e hora separados
-  TimeOfDay? horaSelecionada; // Mantém data e hora separados
+  DateTime? dataSelecionada;
+  TimeOfDay? horaSelecionada;
   bool _salvando = false;
 
-  // Seus controllers originais
   final tituloController = TextEditingController();
   final observacaoController = TextEditingController();
-  final localController = TextEditingController(text: "Igreja Matriz");
+  final outroLocalController = TextEditingController();
   final celebranteController = TextEditingController();
   final comentarioController = TextEditingController();
   final precesController = TextEditingController();
+  final missaService = MissaService();
 
-  // Suas tags originais
   final List<String> _tagsDisponiveis = [
     'Solenidade',
     'Festa',
@@ -38,37 +38,49 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
     'Crisma',
     'Primeira Comunhão',
   ];
+
   final Set<String> _tagsSelecionadas = {};
 
-  final missaService = MissaService(); // Seu service
+  final List<String> _locaisDisponiveis = [
+    "Igreja Matriz",
+    "Capela N. Sra Sagrado Coração (Casa Branca)",
+    "Capela Sagrada Família (Elisa)",
+    "Capela Santa Luzia (Elisa)",
+    "Capela N. Sra de Fátima (Ponte Alta)",
+    "Capela São Vicente de Paulo (Vila Rural 1)",
+    "Capela São José (Vila Rural 2)",
+    "Capela São N. Sra Aparecida (Jatobá)",
+    "Outro",
+  ];
+
+  String? _localSelecionado;
+  bool _mostrarCampoOutroLocal = false;
+  bool _enviarNotificacao = false;
 
   @override
   void dispose() {
     tituloController.dispose();
     observacaoController.dispose();
-    localController.dispose();
+    outroLocalController.dispose();
     celebranteController.dispose();
     comentarioController.dispose();
     precesController.dispose();
     super.dispose();
   }
 
-  // Suas funções originais de selecionar data/hora
   Future<void> selecionarData() async {
-    FocusScope.of(context).requestFocus(FocusNode());
-    await Future.delayed(const Duration(milliseconds: 100));
+    FocusManager.instance.primaryFocus?.unfocus();
     final data = await showDatePicker(
       context: context,
       initialDate: dataSelecionada ?? DateTime.now(),
       firstDate: DateTime.now(),
-      lastDate: DateTime(2101),
+      lastDate: DateTime(2030),
     );
     if (data != null) setState(() => dataSelecionada = data);
   }
 
   Future<void> selecionarHora() async {
-    FocusScope.of(context).requestFocus(FocusNode());
-    await Future.delayed(const Duration(milliseconds: 100));
+    FocusManager.instance.primaryFocus?.unfocus();
     final hora = await showTimePicker(
       context: context,
       initialTime: horaSelecionada ?? TimeOfDay.now(),
@@ -76,13 +88,30 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
     if (hora != null) setState(() => horaSelecionada = hora);
   }
 
-  // --- Função Salvar CORRIGIDA (sem Future.delayed e usando data/hora separados) ---
   Future<void> salvarMissaEspecial() async {
-    if (_salvando || !_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate() || _salvando) return;
 
     if (dataSelecionada == null || horaSelecionada == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Selecione a data e a hora da missa.")),
+      FeedbackHelper.showSnackBar(
+        context,
+        "Selecione a data e a hora da missa.",
+        isError: true,
+      );
+      return;
+    }
+
+    String? localFinal;
+    if (_localSelecionado == 'Outro') {
+      localFinal = outroLocalController.text.trim();
+    } else {
+      localFinal = _localSelecionado;
+    }
+
+    if (localFinal == null || localFinal.isEmpty) {
+      FeedbackHelper.showSnackBar(
+        context,
+        "Por favor, selecione ou digite um local.",
+        isError: true,
       );
       return;
     }
@@ -90,13 +119,11 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
     setState(() => _salvando = true);
 
     try {
-      // Usa apenas a data para buscar a liturgia (como no seu original)
       final liturgiaDoDia = await LiturgiaService().fetchLiturgia(
         data: dataSelecionada!,
       );
 
-      // Cria a escala (como no seu original)
-      final Map<String, dynamic> escalaDaMissa = {
+      final Map<String, dynamic> escalaDinamica = {
         'comentarista': null,
         'preces': null,
         'salmo': null,
@@ -104,56 +131,45 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
         'ministro1': null,
         'ministro2': null,
         'ministro3': null,
-        'musica': null,
-        // Adicionado musica aqui também
         if (liturgiaDoDia.primeiraLeitura.isNotEmpty) 'primeiraLeitura': null,
         if (liturgiaDoDia.segundaLeitura.isNotEmpty) 'segundaLeitura': null,
       };
 
-      // Chama o serviço com os parâmetros originais data e hora
       await missaService.cadastrarMissaEspecial(
         data: dataSelecionada,
-        // Passa DateTime?
         hora: horaSelecionada,
-        // Passa TimeOfDay?
-        titulo: tituloController.text.trim(),
-        celebrante: celebranteController.text.trim(),
-        local: localController.text.trim(),
-        observacao: observacaoController.text.trim(),
+        titulo: tituloController.text,
+        celebrante: celebranteController.text,
+        local: localFinal,
+        observacao: observacaoController.text,
         tags: _tagsSelecionadas.toList(),
-        escala: escalaDaMissa,
-        comentarioInicial: comentarioController.text.trim(),
-        precesDaComunidade: precesController.text.trim(),
+        escala: escalaDinamica,
+        comentarioInicial: comentarioController.text,
+        precesDaComunidade: precesController.text,
+        notificar: _enviarNotificacao,
       );
 
-      if (!mounted) return;
+      if (mounted) {
+        FeedbackHelper.showSuccess(
+          context,
+          "Missa Especial cadastrada com sucesso!",
+        );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Missa especial cadastrada com sucesso!"),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      // Fecha a tela de cadastro e volta para a tela anterior (listaMissas)
-      context.pop();
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted && context.canPop()) {
+            context.pop(); // Volta para a lista
+          }
+        });
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Erro ao cadastrar: ${e.toString()}"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        FeedbackHelper.showError(context, "Não foi possível salvar: $e");
       }
     } finally {
       if (mounted) setState(() => _salvando = false);
     }
   }
 
-  // -----------------------------------------------------------------------------
-
-  // Seu widget _buildSectionTitle original
   Widget _buildSectionTitle(String text) {
     return Text(
       text,
@@ -166,7 +182,6 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
 
   @override
   Widget build(BuildContext context) {
-    // O build permanece EXATAMENTE como você o enviou, sem usar DateTimePickerTile
     return AppScaffold(
       title: "Cadastro de Missa Especial",
       showBackButton: true,
@@ -177,7 +192,76 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // --- Informações gerais (card) ---
+              // Card de Local
+              Card(
+                elevation: 3,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Local da Missa",
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: Theme.of(context).primaryColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      DropdownButtonFormField<String>(
+                        initialValue: _localSelecionado,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: "Local da Celebração *",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.location_on_outlined),
+                        ),
+                        hint: const Text("Selecione o local"),
+                        items:
+                            _locaisDisponiveis.map((local) {
+                              return DropdownMenuItem(
+                                value: local,
+                                child: Text(local),
+                              );
+                            }).toList(),
+                        onChanged: (valor) {
+                          setState(() {
+                            _localSelecionado = valor;
+                            _mostrarCampoOutroLocal = valor == 'Outro';
+                          });
+                        },
+                        validator:
+                            (v) => v == null ? "Selecione um local" : null,
+                      ),
+
+                      if (_mostrarCampoOutroLocal) ...[
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: outroLocalController,
+                          decoration: const InputDecoration(
+                            labelText: "Especifique o local *",
+                            hintText: "Ex: Praça Central",
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.edit_location_alt_outlined),
+                          ),
+                          validator: (value) {
+                            if (_mostrarCampoOutroLocal &&
+                                (value == null || value.trim().isEmpty)) {
+                              return 'Por favor, digite o nome do local.';
+                            }
+                            return null;
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
               Card(
                 elevation: 3,
                 shape: RoundedRectangleBorder(
@@ -203,18 +287,6 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                                     : null,
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: localController,
-                        decoration: const InputDecoration(
-                          labelText: "Local *",
-                          border: OutlineInputBorder(),
-                        ),
-                        validator:
-                            (v) =>
-                                v == null || v.trim().isEmpty
-                                    ? 'O local é obrigatório.'
-                                    : null,
-                      ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: celebranteController,
@@ -243,8 +315,7 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // --- Tags (card) ---
+              // Card Tags
               Card(
                 elevation: 2,
                 shape: RoundedRectangleBorder(
@@ -310,8 +381,7 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // --- Textos da missa (card) ---
+              // --- Comentários e Preces
               Card(
                 elevation: 2,
                 shape: RoundedRectangleBorder(
@@ -322,13 +392,13 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _buildSectionTitle("Textos da Missa (Opcional)"),
+                      _buildSectionTitle("Comentários e Preces"),
                       // Marcado como opcional
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: comentarioController,
                         decoration: const InputDecoration(
-                          labelText: "Comentário Inicial",
+                          labelText: "Comentário Inicial *",
                           border: OutlineInputBorder(),
                         ),
                         maxLines: 3,
@@ -344,7 +414,7 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                       TextFormField(
                         controller: precesController,
                         decoration: const InputDecoration(
-                          labelText: "Preces da Comunidade",
+                          labelText: "Preces da Comunidade *",
                           border: OutlineInputBorder(),
                         ),
                         maxLines: 4,
@@ -361,7 +431,6 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                 ),
               ),
               const SizedBox(height: 16),
-
               // --- Data e Hora (card com botões originais) ---
               Card(
                 elevation: 2,
@@ -384,7 +453,7 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                               icon: const Icon(Icons.calendar_today),
                               label: Text(
                                 dataSelecionada == null
-                                    ? "Selecionar Data *"
+                                    ? "Selecionar Data "
                                     : DateFormat(
                                       'dd/MM/yyyy',
                                     ).format(dataSelecionada!),
@@ -403,7 +472,7 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                               icon: const Icon(Icons.access_time),
                               label: Text(
                                 horaSelecionada == null
-                                    ? "Selecionar Hora *"
+                                    ? "Selecionar Hora"
                                     : horaSelecionada!.format(context),
                               ),
                               style: FilledButton.styleFrom(
@@ -420,38 +489,59 @@ class _CadastroMissaEspecialPageState extends State<CadastroMissaEspecialPage> {
                 ),
               ),
               const SizedBox(height: 24),
+              // Card(
+              //   elevation: 0,
+              //   color: Colors.white,
+              //   shape: RoundedRectangleBorder(
+              //     borderRadius: BorderRadius.circular(12),
+              //     side: BorderSide(color: Colors.grey.shade200),
+              //   ),
+              //   child: SwitchListTile(
+              //     title: const Text(
+              //       "Notificar Usuários",
+              //       style: TextStyle(fontWeight: FontWeight.w600),
+              //     ),
+              //     subtitle: const Text(
+              //       "Envie um alerta para todos os usuários.",
+              //       style: TextStyle(fontSize: 12, color: Colors.grey),
+              //     ),
+              //     value: _enviarNotificacao,
+              //     activeThumbColor: Theme.of(context).primaryColor,
+              //     onChanged: (val) => setState(() => _enviarNotificacao = val),
+              //   ),
+              // ),
 
+              const SizedBox(height: 30),
               // --- Botão Salvar (original) ---
               ElevatedButton(
                 onPressed: _salvando ? null : salvarMissaEspecial,
                 style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 52),
+                  backgroundColor: Theme.of(context).primaryColor,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 54),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  elevation: 4,
                 ),
-                child: AnimatedSwitcher(
-                  // Mantém a animação do botão
-                  duration: const Duration(milliseconds: 250),
-                  transitionBuilder:
-                      (child, anim) =>
-                          ScaleTransition(scale: anim, child: child),
-                  child:
-                      _salvando
-                          ? const SizedBox(
-                            key: ValueKey('loading'),
-                            width: 26,
-                            height: 26,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 3,
-                            ),
-                          )
-                          : const Text(
-                            'Salvar Missa Especial',
-                            key: ValueKey('text'),
+                child:
+                    _salvando
+                        ? const SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 3,
                           ),
-                ),
+                        )
+                        : const Text(
+                          'Cadastrar Missa Especial',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
               ),
             ],
           ),

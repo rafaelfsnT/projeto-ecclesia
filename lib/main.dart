@@ -1,3 +1,4 @@
+import 'package:app_ecclesia/widgets/app/global_notification_wrapper.dart';
 import 'package:app_ecclesia/widgets/app/offline_block_widget.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -20,8 +21,16 @@ import 'viewmodels/perfil_viewmodel.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true, // Necessário para mostrar avisos com app aberto
+    badge: true,
+    sound: true,
+  );
+
   final authNotifier = AuthNotifier();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   if (kDebugMode) {
     await FirebaseAuth.instance.signOut();
     print('MODO DEBUG: Sessão de usuário limpa no reinício.');
@@ -32,8 +41,6 @@ void main() async {
       providers: [
         Provider<AuthService>(create: (_) => AuthService()),
         Provider<UploadService>(create: (_) => UploadService()),
-
-        // 2. ADICIONAMOS O SERVICE DE CONEXÃO AQUI
         ChangeNotifierProvider(create: (_) => ConnectionService()),
 
         ChangeNotifierProvider.value(value: authNotifier),
@@ -56,18 +63,16 @@ void main() async {
         debugShowCheckedModeBanner: false,
         supportedLocales: const [Locale('pt', 'BR')],
         localizationsDelegates: const [
-          // Adicionei const para otimizar
           GlobalMaterialLocalizations.delegate,
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
         ],
 
-        // 3. AQUI ESTÁ A MÁGICA QUE FAZ O BLOQUEIO APARECER
         builder: (context, child) {
-          // Proteção caso child seja nulo
-          if (child == null) return const SizedBox.shrink();
-          // Envolvemos todo o app no Widget de Bloqueio
-          return OfflineBlockWidget(child: child);
+          Widget widget = child ?? const SizedBox.shrink();
+          widget = OfflineBlockWidget(child: widget);
+          widget = GlobalNotificationWrapper(child: widget);
+          return widget;
         },
 
         home: MyAppEcclesia(authNotifier: authNotifier),

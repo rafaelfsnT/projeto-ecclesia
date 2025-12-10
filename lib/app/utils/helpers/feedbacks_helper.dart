@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../widgets/missas/auto_dismiss_dialog.dart';
 class FeedbackHelper {
-  /// Mostra mensagem de SUCESSO (Verde/Gradiente)
   static void showSuccess(
     BuildContext context,
     String message, {
@@ -25,7 +24,6 @@ class FeedbackHelper {
     String message, {
     String title = "Erro",
   }) {
-    // Tratamento para limpar mensagens de exceção feias
     final cleanMessage = message.replaceAll("Exception: ", "");
 
     showDialog(
@@ -39,7 +37,6 @@ class FeedbackHelper {
     );
   }
 
-  /// Mostra um SnackBar rápido (para avisos menores)
   static void showSnackBar(
     BuildContext context,
     String message, {

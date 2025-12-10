@@ -1,3 +1,4 @@
+import '../../widgets/app/notification_drop_down.dart';
 import '/widgets/app/app_scaffold.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -6,7 +7,6 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '/models/evento_model.dart';
-import '/widgets/app/notification_drop_down.dart';
 import '/widgets/app/profile_avatar_button.dart';
 import '/notifier/auth_notifier.dart';
 

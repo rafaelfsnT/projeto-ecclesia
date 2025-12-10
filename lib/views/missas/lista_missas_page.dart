@@ -1,28 +1,163 @@
-import '/widgets/app/app_scaffold.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import '../../app/utils/helpers/feedbacks_helper.dart';
+import '../../widgets/app/app_scaffold.dart';
 import '/services/missa_service.dart';
 import '/widgets/missas/editar_missaC_dialog.dart';
 import '/widgets/missas/editar_missasE_dialog.dart';
-
-// NOVO IMPORT
 import '../../widgets/admin/admin_list_action_buttons.dart';
 
-class ListaMissasPage extends StatelessWidget {
-  ListaMissasPage({super.key});
+class ListaMissasPage extends StatefulWidget {
+  const ListaMissasPage({super.key});
 
+  @override
+  State<ListaMissasPage> createState() => _ListaMissasPageState();
+}
+
+class _ListaMissasPageState extends State<ListaMissasPage> {
   final MissaService missaService = MissaService();
 
-  Future<void> excluirMissa(BuildContext context,
-      String id,
-      String missaNome,) async {
+  bool _ordemCrescente = true;
+  String _filtroTipo = 'Todos';
+  int _filtroAno = DateTime.now().year;
+  int? _filtroMes;
+
+  @override
+  void initState() {
+    super.initState();
+    initializeDateFormatting('pt_BR', null);
+  }
+
+  Future<void> _enviarNotificacaoAgenda() async {
+    if (_filtroMes == null) {
+      FeedbackHelper.showSnackBar(
+        context,
+        "Selecione um mês no filtro para enviar o aviso.",
+        isError: true,
+      );
+      return;
+    }
+
+    final nomeMes = DateFormat('MMMM', 'pt_BR').format(DateTime(_filtroAno, _filtroMes!));
+    final nomeMesCapitalizado = "${nomeMes[0].toUpperCase()}${nomeMes.substring(1)}";
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (c) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final inicioMes = DateTime(_filtroAno, _filtroMes!, 1);
+      final fimMes = DateTime(_filtroAno, _filtroMes! + 1, 0, 23, 59, 59);
+
+      final snapshotChecagem = await FirebaseFirestore.instance
+          .collection('missas')
+          .where('dataHora', isGreaterThanOrEqualTo: Timestamp.fromDate(inicioMes))
+          .where('dataHora', isLessThanOrEqualTo: Timestamp.fromDate(fimMes))
+          .limit(1)
+          .get();
+
+      // Fecha o loading usando o Root Navigator
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+      if (snapshotChecagem.docs.isEmpty) {
+        if (mounted) {
+          FeedbackHelper.showSnackBar(
+            context,
+            "Não há missas cadastradas em $nomeMesCapitalizado de $_filtroAno para notificar.",
+            isError: true,
+          );
+        }
+        return;
+      }
+
+    } catch (e) {
+      // Garante o fechamento do loading em caso de erro
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted) FeedbackHelper.showError(context, "Erro ao verificar missas: $e");
+      return;
+    }
+
+    // 3. Confirmação
+    if (!mounted) return;
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Notificar Agenda"),
+        content: Text("Deseja enviar uma notificação para todos os usuários informando que a agenda de $nomeMesCapitalizado de $_filtroAno está disponível?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancelar")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Enviar Agora")),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enviando notificações...")));
+    }
+
+    try {
+      await missaService.notificarAgendaMensal(nomeMesCapitalizado, _filtroAno);
+      if (mounted) FeedbackHelper.showSuccess(context, "Aviso enviado com sucesso!");
+    } catch (e) {
+      if (mounted) FeedbackHelper.showError(context, "Erro: $e");
+    }
+  }
+
+  List<QueryDocumentSnapshot> _aplicarFiltros(
+    List<QueryDocumentSnapshot> docs,
+  ) {
+    var listaFiltrada =
+        docs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          final dataHora = (data['dataHora'] as Timestamp).toDate();
+
+          // 1. Filtro de Tipo
+          if (_filtroTipo != 'Todos') {
+            final tipoDoc = (data['tipo'] ?? 'comum').toString().toLowerCase();
+            if (tipoDoc != _filtroTipo.toLowerCase()) return false;
+          }
+
+          // 2. Filtro de Ano (Obrigatório ter um ano selecionado)
+          if (dataHora.year != _filtroAno) {
+            return false;
+          }
+
+          // 3. Filtro de Mês (Opcional)
+          if (_filtroMes != null) {
+            if (dataHora.month != _filtroMes) {
+              return false;
+            }
+          }
+
+          return true;
+        }).toList();
+
+    // Ordenação
+    if (!_ordemCrescente) {
+      listaFiltrada = listaFiltrada.reversed.toList();
+    }
+
+    return listaFiltrada;
+  }
+
+  Future<void> excluirMissa(
+    BuildContext context,
+    String id,
+    String missaNome,
+  ) async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder:
-          (dialogContext) =>
-          AlertDialog(
+          (dialogContext) => AlertDialog(
             title: const Text("Confirmar exclusão"),
             content: Text('Deseja realmente excluir a missa "$missaNome"?'),
             actions: [
@@ -31,12 +166,7 @@ class ListaMissasPage extends StatelessWidget {
                 child: const Text("Cancelar"),
               ),
               TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme
-                      .of(context)
-                      .colorScheme
-                      .error,
-                ),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
                 onPressed: () => Navigator.pop(dialogContext, true),
                 child: const Text("Excluir"),
               ),
@@ -47,17 +177,15 @@ class ListaMissasPage extends StatelessWidget {
     if (confirmar == true) {
       try {
         await FirebaseFirestore.instance.collection("missas").doc(id).delete();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Missa excluída com sucesso!")),
-          );
-        }
+        if (mounted)
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text("Missa excluída!")));
       } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Erro ao excluir missa: ${e.toString()}")),
-          );
-        }
+        if (mounted)
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("Erro: $e")));
       }
     }
   }
@@ -66,11 +194,10 @@ class ListaMissasPage extends StatelessWidget {
     final confirmar = await showDialog<bool>(
       context: context,
       builder:
-          (dialogContext) =>
-          AlertDialog(
-            title: const Text("EXCLUIR TODAS AS MISSAS"),
+          (dialogContext) => AlertDialog(
+            title: const Text("ATENÇÃO PERIGO"),
             content: const Text(
-              "ATENÇÃO! Deseja realmente excluir TODAS as missas cadastradas? Esta ação é irreversível.",
+              "Isso apagará TODAS as missas do sistema. Tem certeza?",
             ),
             actions: [
               TextButton(
@@ -78,84 +205,42 @@ class ListaMissasPage extends StatelessWidget {
                 child: const Text("Cancelar"),
               ),
               TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme
-                      .of(context)
-                      .colorScheme
-                      .error,
-                ),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text("EXCLUIR TUDO"),
+                child: const Text("APAGAR TUDO"),
               ),
             ],
           ),
     );
 
     if (confirmar == true) {
-      try {
-        await missaService.deleteAllMissas();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Todas as missas foram excluídas com sucesso!"),
-            ),
-          );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Erro ao excluir todas as missas: ${e.toString()}"),
-            ),
-          );
-        }
-      }
+      await missaService.deleteAllMissas();
     }
-  }
-
-  void _showFullObservation(BuildContext context, String observacao) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text("Observação Completa"),
-          content: SingleChildScrollView(child: Text(observacao)),
-          actions: <Widget>[
-            TextButton(
-              child: const Text("Fechar"),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _showAddMissaOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (BuildContext bc) {
         return SafeArea(
           child: Wrap(
             children: <Widget>[
               ListTile(
-                leading: const Icon(Icons.calendar_month),
+                leading: const Icon(Icons.calendar_today, color: Colors.blue),
                 title: const Text('Nova Missa Comum'),
                 onTap: () {
                   Navigator.pop(bc);
-                  // Usando push/go router se o contexto for o do scaffold
-                  // Note: Aqui a navegação original usava push do Flutter, mas se quiser migrar:
                   context.push('/createMissa');
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.star),
+                leading: const Icon(Icons.star, color: Colors.amber),
                 title: const Text('Nova Missa Especial'),
                 onTap: () {
                   Navigator.pop(bc);
-                  // Usando push/go router se o contexto for o do scaffold
                   context.push('/createMissaE');
                 },
               ),
@@ -166,309 +251,566 @@ class ListaMissasPage extends StatelessWidget {
     );
   }
 
-  Future<void> editarMissa(BuildContext context, DocumentSnapshot missa) async {
+  Future<void> editarMissaGeneric(
+    BuildContext context,
+    DocumentSnapshot missa,
+    bool isEspecial,
+  ) async {
     final bool? salvo = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => EditarMissaComumDialog(missa: missa),
-    );
-    if (salvo == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Missa atualizada com sucesso!"),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
-  }
-
-  Future<void> editarMissaEspecial(BuildContext context,
-      DocumentSnapshot missa,) async {
-    final bool? salvo = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => EditarMissaEspecialDialog(missa: missa),
-    );
-    if (salvo == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Missa especial atualizada com sucesso!"),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
-  }
-
-  Widget _buildTagsList(List<String> tags, bool isEspecial) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 2,
-      children:
-      tags
-          .map(
-            (t) =>
-            Chip(
-              label: Text(t, style: const TextStyle(fontSize: 12)),
-              backgroundColor:
+      builder:
+          (_) =>
               isEspecial
-                  ? Colors.orange.shade700.withValues(alpha: 0.15)
-                  : Colors.grey.shade200,
-              labelPadding: const EdgeInsets.symmetric(
-                horizontal: 4,
-                vertical: 0,
+                  ? EditarMissaEspecialDialog(missa: missa)
+                  : EditarMissaComumDialog(missa: missa),
+    );
+    if (salvo == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Atualizado com sucesso!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  // --- UI DOS FILTROS ATUALIZADA ---
+  Widget _buildFilterBar(ThemeData theme) {
+    // Gera lista de anos (ex: do ano passado até +5 anos pra frente)
+    final currentYear = DateTime.now().year;
+    final anosDisponiveis = List.generate(
+      6,
+      (index) => (currentYear - 1) + index,
+    ); // 2024, 2025...
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 5,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              // 1. Dropdown de ANO
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: _filtroAno,
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      size: 20,
+                      color: Colors.grey,
+                    ),
+                    items:
+                        anosDisponiveis.map((ano) {
+                          return DropdownMenuItem(
+                            value: ano,
+                            child: Text(
+                              ano.toString(),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setState(() => _filtroAno = val);
+                    },
+                  ),
+                ),
               ),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              shape: RoundedRectangleBorder(
+
+              const SizedBox(width: 8),
+
+              // 2. Dropdown de MÊS
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int>(
+                      value: _filtroMes,
+                      hint: const Text("Todos"),
+                      icon: const Icon(
+                        Icons.calendar_month,
+                        size: 18,
+                        color: Colors.grey,
+                      ),
+                      isExpanded: true,
+                      items: [
+                        const DropdownMenuItem<int>(
+                          value: null,
+                          child: Text(
+                            "Todos os meses",
+                            style: TextStyle(fontSize: 14),
+                          ),
+                        ),
+                        // Gera os 12 meses
+                        ...List.generate(12, (index) {
+                          // Usa uma data qualquer para formatar o nome do mês
+                          final date = DateTime(2024, index + 1);
+                          return DropdownMenuItem(
+                            value: index + 1,
+                            child: Text(
+                              DateFormat(
+                                'MMMM',
+                                'pt_BR',
+                              ).format(date).toUpperCase(),
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }),
+                      ],
+                      onChanged: (val) {
+                        setState(() => _filtroMes = val);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              // 3. Botão de Ordenação
+              InkWell(
+                onTap: () => setState(() => _ordemCrescente = !_ordemCrescente),
                 borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    _ordemCrescente ? Icons.arrow_downward : Icons.arrow_upward,
+                    color: theme.colorScheme.primary,
+                    size: 20,
+                  ),
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Chips de Tipo
+          SizedBox(
+            height: 32,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children:
+                  ['Todos', 'Comum', 'Especial'].map((tipo) {
+                    final isSelected = _filtroTipo == tipo;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: FilterChip(
+                        label: Text(tipo),
+                        selected: isSelected,
+                        onSelected: (val) => setState(() => _filtroTipo = tipo),
+                        backgroundColor: Colors.grey.shade100,
+                        selectedColor: theme.colorScheme.primary.withValues(
+                          alpha: 0.2,
+                        ),
+                        labelStyle: TextStyle(
+                          color:
+                              isSelected
+                                  ? theme.colorScheme.primary
+                                  : Colors.black87,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          side: BorderSide(
+                            color:
+                                isSelected
+                                    ? theme.colorScheme.primary
+                                    : Colors.transparent,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
             ),
-      )
-          .toList(),
+          ),
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return AppScaffold(
-      title: "Lista de Missas",
-      // 1. CONFIGURAÇÃO DA APPBAR: Remove o Back Button e o Drawer
+      title: "Gestão de Missas",
       showBackButton: false,
       showDrawer: false,
-
-      // 2. NOVO LEADING: Botão 'Home'
       leading: const HomeAdminButton(),
-
-      // 3. NOVAS AÇÕES: Botão 'Adicionar' e 'Deletar Tudo'
       actions: [
+        IconButton(
+          icon: const Icon(Icons.campaign, color: Colors.blue), // Megafone
+          tooltip: 'Avisar sobre Agenda do Mês',
+          onPressed: _enviarNotificacaoAgenda,
+        ),
+
         AddActionButton(
-          tooltip: 'Adicionar Missa',
+          tooltip: 'Nova Missa',
           onPressed: () => _showAddMissaOptions(context),
         ),
         IconButton(
-          icon: const Icon(Icons.delete_forever, color: Colors.red),
-          tooltip: "Deletar todas as missas",
+          icon: const Icon(Icons.delete_sweep, color: Colors.red),
+          tooltip: "Limpar tudo",
           onPressed: () => excluirTodasMissas(context),
         ),
       ],
+      body: Column(
+        children: [
+          _buildFilterBar(theme), // Barra de filtros moderna
 
-      // 4. FLOATING ACTION BUTTON REMOVIDO
-      floatingActionButton: null,
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream:
+                  FirebaseFirestore.instance
+                      .collection("missas")
+                      .orderBy("dataHora")
+                      .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData)
+                  return const Center(child: CircularProgressIndicator());
 
-      // 5. BODY
-      body: StreamBuilder<QuerySnapshot>(
-        stream:
-        FirebaseFirestore.instance
-            .collection("missas")
-            .orderBy("dataHora")
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+                final docs = snapshot.data!.docs;
+                final missasFiltradas = _aplicarFiltros(docs);
 
-          final missas = snapshot.data!.docs;
-          if (missas.isEmpty) {
-            return const Center(child: Text("Nenhuma missa cadastrada."));
-          }
-
-          return ListView.builder(
-            itemCount: missas.length,
-            itemBuilder: (context, index) {
-              final missa = missas[index];
-              final dataHora = (missa['dataHora'] as Timestamp).toDate();
-              final dataFormatada = DateFormat('dd/MM/yyyy').format(dataHora);
-              final horaFormatada = DateFormat('HH:mm').format(dataHora);
-
-              final DateTime dataExpiracao = dataHora.add(
-                const Duration(hours: 1),
-              );
-              final bool isExpirada = dataExpiracao.isBefore(DateTime.now());
-
-              final dados = missa.data() as Map<String, dynamic>;
-              final tipo = dados["tipo"] ?? "comum";
-              final titulo = dados["titulo"] ?? "";
-              final celebrante = dados["celebrante"] ?? "";
-              final String observacao = dados["observacao"] ?? "";
-              final List tags =
-              (dados["tags"] is List ? dados["tags"] : []) as List;
-              final bool isEspecial = tipo == "especial";
-
-              final String nomeMissa =
-              titulo.isNotEmpty ? titulo : "Missa Comum";
-
-              final Color cardBackgroundColor =
-              isExpirada
-                  ? Colors
-                  .grey
-                  .shade200 // Cor de missa expirada
-                  : (isEspecial
-                  ? Colors
-                  .yellow
-                  .shade50 // Cor de missa especial
-                  : Theme
-                  .of(context)
-                  .cardColor); // Cor normal
-
-              // Define o ícone com base no status
-              final Icon iconLeading = Icon(
-                isExpirada
-                    ? Icons
-                    .check_circle_outline // Ícone de expirada
-                    : (isEspecial ? Icons.star : Icons.church),
-                // Ícones normais
-                color:
-                isExpirada
-                    ? Colors
-                    .grey
-                    .shade600 // Cor do ícone expirado
-                    : (isEspecial
-                    ? Colors.orange.shade700
-                    : Theme
-                    .of(context)
-                    .primaryColor),
-                size: 32,
-              );
-
-              final subtitleStyle = TextStyle(
-                fontStyle: FontStyle.italic,
-                color: isEspecial ? Colors.black54 : Colors.black54,
-              );
-
-              return Card(
-                color: cardBackgroundColor,
-                elevation: isEspecial ? 6 : (isExpirada ? 0 : 2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side:
-                  isExpirada
-                      ? BorderSide(
-                    color: Colors.grey.shade400,
-                    width: 1,
-                  ) // Borda cinza
-                      : (isEspecial
-                      ? BorderSide(
-                    color: Colors.orange.shade700.withValues(
-                      alpha: 0.4,
+                if (missasFiltradas.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.event_busy,
+                          size: 60,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          "Nenhuma missa encontrada.",
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      ],
                     ),
-                    width: 1,
-                  )
-                      : BorderSide.none),
-                ),
-                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: ListTile(
-                  leading: iconLeading,
-                  title: Text(
-                    nomeMissa,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: isExpirada ? Colors.grey.shade700 : Colors.black87,
-                      decoration:
-                      isExpirada ? TextDecoration.lineThrough : null,
-                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 12,
+                    horizontal: 16,
                   ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "$dataFormatada às $horaFormatada",
-                        style: subtitleStyle.copyWith(
-                          fontStyle: FontStyle.normal,
-                          fontWeight: FontWeight.w500,
-                        ),
+                  itemCount: missasFiltradas.length,
+                  itemBuilder: (context, index) {
+                    return _MissaListItem(
+                      missaDoc: missasFiltradas[index],
+                      onEdit:
+                          (doc, isEspecial) =>
+                              editarMissaGeneric(context, doc, isEspecial),
+                      onDelete: (id, nome) => excluirMissa(context, id, nome),
+                      onTap: (id) => context.go('/missa/$id'),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MissaListItem extends StatelessWidget {
+  final QueryDocumentSnapshot missaDoc;
+  final Function(DocumentSnapshot, bool) onEdit;
+  final Function(String, String) onDelete;
+  final Function(String) onTap;
+
+  const _MissaListItem({
+    required this.missaDoc,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final data = missaDoc.data() as Map<String, dynamic>;
+
+    final dataHora = (data['dataHora'] as Timestamp).toDate();
+    final tipo = data["tipo"] ?? "comum";
+    final titulo =
+        data["titulo"]?.toString().isNotEmpty == true
+            ? data["titulo"]
+            : "Missa Comum";
+    final celebrante = data["celebrante"] ?? "";
+    final local = data["local"] ?? "";
+    final isEspecial = tipo == "especial";
+
+    // Verifica se expirou (com 1h de tolerância)
+    final isExpirada = DateTime.now().isAfter(
+      dataHora.add(const Duration(hours: 1)),
+    );
+
+    Color statusColor;
+    if (isExpirada) {
+      statusColor = Colors.grey;
+    } else if (isEspecial) {
+      statusColor = Colors.amber;
+    } else {
+      statusColor =
+          theme.colorScheme.primary; // Verde ou Azul (Sua cor primária)
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: IntrinsicHeight(
+          // Garante que a faixa lateral acompanhe a altura
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 1. Faixa Lateral de Status
+              Container(width: 6, color: statusColor),
+
+              // 2. Bloco de Data (Estilo Calendário)
+              Container(
+                width: 70,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  border: Border(
+                    right: BorderSide(color: Colors.grey.shade200),
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      dataHora.day.toString(),
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: isExpirada ? Colors.grey : Colors.black87,
                       ),
-                      if (celebrante.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4.0),
-                          child: Text(
-                            "Celebrante: $celebrante",
-                            style: subtitleStyle,
-                          ),
-                        ),
-                      if (observacao.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4.0),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  "Obs: ${observacao.length > 40 ? '${observacao
-                                      .substring(0, 40)}...' : observacao}",
-                                  style: subtitleStyle.copyWith(
-                                    color: Colors.red.shade700,
-                                    fontStyle: FontStyle.normal,
-                                    fontWeight: FontWeight.w500,
-                                  ),
+                    ),
+                    Text(
+                      DateFormat('MMM', 'pt_BR').format(dataHora).toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: isExpirada ? Colors.grey : statusColor,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      DateFormat('HH:mm').format(dataHora),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // 3. Conteúdo Principal
+              Expanded(
+                child: InkWell(
+                  onTap: () => onTap(missaDoc.id),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Tags (Especial / Expirada)
+                        Row(
+                          children: [
+                            if (isExpirada)
+                              _StatusTag(text: "REALIZADA", color: Colors.grey),
+                            if (isEspecial)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 6),
+                                child: _StatusTag(
+                                  text: "ESPECIAL",
+                                  color: Colors.amber,
                                 ),
                               ),
-                              if (observacao.length > 40)
-                                GestureDetector(
-                                  onTap:
-                                      () =>
-                                      _showFullObservation(
-                                        context,
-                                        observacao,
-                                      ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(left: 4.0),
-                                    child: Icon(
-                                      Icons.info_outline,
-                                      size: 16,
-                                      color: Colors.red.shade700,
+                          ],
+                        ),
+                        if (isExpirada || isEspecial) const SizedBox(height: 6),
+
+                        Text(
+                          titulo,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: isExpirada ? Colors.grey : Colors.black87,
+                            decoration:
+                                isExpirada ? TextDecoration.lineThrough : null,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+
+                        if (celebrante.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.person,
+                                  size: 14,
+                                  color: Colors.grey.shade500,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    celebrante,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade600,
                                     ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      if (tags.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6.0),
-                          child: _buildTagsList(
-                            tags.cast<String>(),
-                            isEspecial,
+                        if (local.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on,
+                                  size: 14,
+                                  color: Colors.grey.shade500,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    local,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
-                  trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                  IconButton(
-                  icon: Icon(
-                  Icons.edit,
-                      color:
-                      isExpirada
-                          ? ColorScheme
-                          .of(context)
-                          .secondary
-                          : const Color(0xFF5D4037),
                 ),
-                onPressed: () {
-                  if (isEspecial) {
-                    editarMissaEspecial(context, missa);
-                  } else {
-                    editarMissa(context, missa);
-                  }
+              ),
+
+              // 4. Menu de Ações
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert, color: Colors.grey.shade400),
+                onSelected: (value) {
+                  if (value == 'edit') onEdit(missaDoc, isEspecial);
+                  if (value == 'delete') onDelete(missaDoc.id, titulo);
                 },
+                itemBuilder:
+                    (context) => [
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit, color: Colors.blue),
+                            SizedBox(width: 8),
+                            Text("Editar"),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete, color: Colors.red),
+                            SizedBox(width: 8),
+                            Text("Excluir"),
+                          ],
+                        ),
+                      ),
+                    ],
               ),
-              IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red),
-              onPressed:
-              () => excluirMissa(context, missa.id, nomeMissa),
-              ),
-              ],
-              ),
-              onTap: () {
-              context.go('/missa/${missa.id}');
-              },
-              )
-              ,
-              );
-            },
-          );
-        },
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusTag extends StatelessWidget {
+  final String text;
+  final MaterialColor color; // Ou Color
+
+  const _StatusTag({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color bgColor = (color).shade50;
+    final Color textColor = (color).shade800;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: textColor.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+          color: textColor,
+        ),
       ),
     );
   }

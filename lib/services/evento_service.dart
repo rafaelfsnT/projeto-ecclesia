@@ -12,11 +12,6 @@ class EventoService {
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final String _collection = 'eventos';
 
-  // -----------------------
-  // STREAM / READ
-  // -----------------------
-
-  /// Stream em tempo real para o ViewModel / UI
   Stream<List<Evento>> get eventos {
     return _firestore
         .collection(_collection)
@@ -26,7 +21,6 @@ class EventoService {
         snapshot.docs.map((doc) => Evento.fromMap(doc.data(), doc.id)).toList());
   }
 
-  /// Busca uma vez (não em tempo real)
   Future<List<Evento>> getEventos() async {
     final snapshot = await _firestore
         .collection(_collection)
@@ -36,11 +30,6 @@ class EventoService {
     return snapshot.docs.map((doc) => Evento.fromMap(doc.data(), doc.id)).toList();
   }
 
-  // -----------------------
-  // CREATE
-  // -----------------------
-
-  /// Cria documento do evento sem imagens e retorna eventId
   Future<String> criarEventoSemImagens(Evento evento) async {
     try {
       await _validarEvento(evento, isUpdate: false);
@@ -53,9 +42,6 @@ class EventoService {
     }
   }
 
-  /// Cria evento e realiza upload de imagens (se houver). Retorna eventId.
-  /// - Primeiro cria o documento (sem imagens), pega o ID, faz upload das imagens
-  ///   e atualiza o documento com a lista de URLs das imagens.
   Future<String> criarEventoComImagens(Evento evento, List<File> imagens) async {
     try {
       // validação
@@ -80,7 +66,6 @@ class EventoService {
     }
   }
 
-  /// Método simples/compatível: cria usando Evento e (opcional) lista de URLs já obtidas
   Future<void> criarEvento(Evento evento, {List<String>? imageUrls}) async {
     try {
       await _validarEvento(evento, isUpdate: false);
@@ -95,11 +80,6 @@ class EventoService {
     }
   }
 
-  // -----------------------
-  // UPLOAD IMAGENS
-  // -----------------------
-
-  /// Upload de múltiplas imagens para um eventId — retorna lista de URLs
   Future<List<String>> uploadImagensEvento(List<File> imagens, String eventId) async {
     final List<String> urls = [];
     for (int i = 0; i < imagens.length; i++) {
@@ -115,7 +95,6 @@ class EventoService {
     return urls;
   }
 
-  /// Upload single image (útil em outras rotas). Se eventId for null, salva em unsorted.
   Future<String> uploadImagemEvento(File imagem, {String? eventId}) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final fileName = '${timestamp}_${imagem.path.split('/').last}';
@@ -125,12 +104,6 @@ class EventoService {
     return await snapshot.ref.getDownloadURL();
   }
 
-  // -----------------------
-  // UPDATE
-  // -----------------------
-
-  /// Atualizar um evento usando o objeto Evento (com validação)
-  /// Atualiza também imageUrls se fornecido.
   Future<void> atualizarEvento(Evento evento, {List<String>? imageUrls}) async {
     if (evento.id == null) {
       throw Exception('Evento sem ID não pode ser atualizado.');
@@ -146,7 +119,6 @@ class EventoService {
     }
   }
 
-  /// Atualizar campos arbitrários (útil para updates parciais)
   Future<void> atualizarEventoCampos(String eventId, Map<String, dynamic> campos) async {
     try {
       await _firestore.collection(_collection).doc(eventId).update(campos);
@@ -156,34 +128,47 @@ class EventoService {
     }
   }
 
-  // -----------------------
-  // DELETE
-  // -----------------------
-
-  /// Deletar evento (Firestore) e tenta deletar arquivos no Storage (pasta do evento)
   Future<void> deletarEvento(String id) async {
     try {
-      // tenta deletar arquivos na pasta do evento no Storage
-      try {
-        final listRef = _storage.ref().child('eventos_imagens/$id');
-        final result = await listRef.listAll();
-        for (final item in result.items) {
-          await item.delete();
+      // 1. Buscar o documento PRIMEIRO para pegar as URLs das imagens
+      final docSnapshot = await _firestore.collection(_collection).doc(id).get();
+
+      if (docSnapshot.exists) {
+        final data = docSnapshot.data();
+
+        // Verifica se existem imagens cadastradas
+        if (data != null && data.containsKey('imageUrls')) {
+          // Converte dinamicamente para lista
+          final List<dynamic> urlsDynamic = data['imageUrls'];
+
+          // 2. Itera sobre cada URL e apaga do Storage
+          for (var url in urlsDynamic) {
+            if (url is String && url.isNotEmpty) {
+              try {
+                // refFromURL pega a referência exata do arquivo, não importa a pasta
+                await _storage.refFromURL(url).delete();
+                print("Imagem deletada do Storage: $url");
+              } catch (e) {
+                // Se der erro ao apagar a imagem (ex: já não existe), apenas loga e continua
+                // Não queremos impedir que o evento seja deletado só porque uma imagem falhou
+                print("Aviso: Erro ao deletar imagem específica ($url): $e");
+              }
+            }
+          }
         }
-      } catch (e) {
-        // pode falhar se a pasta não existir ou permissão; apenas loga
-        print('Aviso ao deletar imagens do Storage: $e');
+      } else {
+        print("Aviso: Tentativa de deletar evento que não existe no Firestore.");
       }
 
-      // deleta o documento
+      // 3. Finalmente, deleta o documento do Firestore
       await _firestore.collection(_collection).doc(id).delete();
+
     } catch (e) {
-      print('EventoService.deletarEvento erro: $e');
+      print('EventoService.deletarEvento erro CRÍTICO: $e');
       rethrow;
     }
   }
 
-  /// Deletar apenas uma imagem por URL (usa refFromURL)
   Future<void> deletarImagemPorUrl(String url) async {
     try {
       final ref = _storage.refFromURL(url);
@@ -194,11 +179,7 @@ class EventoService {
     }
   }
 
-  // -----------------------
-  // HELPERS PRIVADOS
-  // -----------------------
 
-  /// Monta o Map que será salvo no Firestore a partir do Evento
   Map<String, dynamic> _buildMapFromEvento(Evento evento) {
     final titulo = evento.titulo.trim();
     final descricao = evento.descricao.trim();
@@ -219,7 +200,6 @@ class EventoService {
     return map;
   }
 
-  /// Valida campos essenciais. isUpdate: permite que o próprio documento exista sem considerar duplicação
   Future<void> _validarEvento(Evento evento, {bool isUpdate = false}) async {
     final titulo = evento.titulo.trim();
     final descricao = evento.descricao.trim();

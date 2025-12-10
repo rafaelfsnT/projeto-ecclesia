@@ -57,7 +57,7 @@ class _LoginPageState extends State<LoginPage> {
         }
 
         // Usa seu helper com gradiente
-        FeedbackHelper.showError(context, errorMessage, title: "Acesso Negado");
+        FeedbackHelper.showError(context, errorMessage, title: "Acesso Inválido");
       }
     } catch (e) {
       if (mounted) {

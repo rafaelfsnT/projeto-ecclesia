@@ -387,3 +387,82 @@ function formatarCargo(cargoKey: string): string {
     default: return cargoKey;
   }
 }
+
+
+export const notificarAgendaMensal = onCall(functionOptions, async (request) => {
+  // 1. Segurança: Verifica se é Admin
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Usuário não autenticado.");
+  }
+  await verifyIsAdmin(request.auth.uid);
+
+  const nomeMes = request.data.nomeMes; // Ex: "Dezembro"
+  const ano = request.data.ano;         // Ex: 2025
+
+  if (!nomeMes || !ano) {
+    throw new HttpsError("invalid-argument", "Mês e Ano são obrigatórios.");
+  }
+
+  console.log(`Iniciando notificação de agenda para: ${nomeMes}/${ano}`);
+  const db = admin.firestore();
+
+  // 2. Prepara a mensagem
+  const tituloNotif = `📅 Agenda de ${nomeMes} Disponível!`;
+  const corpoNotif = `As missas para o mês de ${nomeMes} de ${ano} já foram cadastradas. Toque para conferir os horários.`;
+
+  const payload = {
+    notification: {
+      title: tituloNotif,
+      body: corpoNotif,
+    },
+    data: {
+      click_action: "FLUTTER_NOTIFICATION_CLICK",
+      screen: "/todas-missas", // Leva para a lista de missas
+    },
+  };
+
+  // Objeto para histórico
+  const notificacaoData = {
+    titulo: tituloNotif,
+    corpo: corpoNotif,
+    data: admin.firestore.FieldValue.serverTimestamp(),
+    lida: false,
+    tipo: "aviso_agenda",
+    documentId: null, // Aviso geral, não liga a uma missa específica
+  };
+
+  try {
+    // 3. Lógica de Envio (Idêntica à de eventos/missas)
+    const usersSnapshot = await db.collection("usuarios").get();
+    const tokens: string[] = [];
+    const writePromises: Promise<any>[] = [];
+
+    usersSnapshot.forEach(userDoc => {
+      const userData = userDoc.data();
+      const isNotAdmin = userData.role !== 'admin';
+
+      if (isNotAdmin) {
+        if (userData.fcmToken) {
+          tokens.push(userData.fcmToken);
+        }
+        // Salva histórico
+        writePromises.push(
+          userDoc.ref.collection("notificacoes").add(notificacaoData)
+        );
+      }
+    });
+
+    await Promise.all(writePromises);
+
+    if (tokens.length > 0) {
+      await admin.messaging().sendEachForMulticast({ tokens, ...payload });
+      return { success: true, message: `Notificação enviada para ${tokens.length} usuários.` };
+    } else {
+      return { success: true, message: "Nenhum usuário para notificar." };
+    }
+
+  } catch (error) {
+    console.error("Erro ao notificar agenda:", error);
+    throw new HttpsError("internal", "Erro ao processar envio.");
+  }
+});

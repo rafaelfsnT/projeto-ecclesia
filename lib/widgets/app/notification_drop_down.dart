@@ -118,7 +118,6 @@ class NotificationDropDownState extends State<NotificationDropDown> {
     BuildContext menuContext,
     QuerySnapshot snapshot,
   ) async {
-    // 1. [CORREÇÃO] Fecha o menu PRIMEIRO
     Navigator.of(menuContext).pop();
 
     if (widget.uid == null) return;
@@ -148,6 +147,119 @@ class NotificationDropDownState extends State<NotificationDropDown> {
           .delete();
     } catch (e) {
       debugPrint("Erro ao excluir notificação: $e");
+    }
+  }
+
+  Future<void> _deleteAllNotifications(
+    BuildContext dialogContext,
+    QuerySnapshot snapshot,
+  ) async {
+    // 1. Confirmação Visual (Estilo Gradiente)
+    final theme = Theme.of(context);
+    final confirm = await showDialog<bool>(
+      context: dialogContext,
+      builder:
+          (ctx) => Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            backgroundColor: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                gradient: LinearGradient(
+                  colors: [
+                    theme.colorScheme.primary,
+                    theme.colorScheme.secondary.withValues(alpha: 0.8),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 15,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.delete_sweep,
+                      size: 32,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "Limpar Tudo",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    "Isso apagará todas as suas notificações permanentemente.",
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text("Cancelar"),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.red,
+                          ),
+                          child: const Text("Limpar"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+
+    if (confirm != true) return;
+
+    // 2. Fecha o menu
+    if (Navigator.canPop(dialogContext)) Navigator.pop(dialogContext);
+
+    // 3. Executa Batch Delete
+    if (widget.uid == null) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final doc in snapshot.docs) {
+      batch.delete(doc.reference);
+    }
+    try {
+      await batch.commit();
+    } catch (e) {
+      debugPrint("Erro ao limpar tudo: $e");
     }
   }
 
@@ -505,24 +617,84 @@ class NotificationDropDownState extends State<NotificationDropDown> {
                       const Divider(height: 1, thickness: 0.5),
 
                       if (!isLoading && !hasError && docs.isNotEmpty)
-                        InkWell(
-                          // [CORREÇÃO] Passamos o contexto do diálogo para fechar
-                          onTap:
-                              () =>
-                                  _markAllAsRead(dialogContext, snapshot.data!),
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            alignment: Alignment.center,
-                            child: Text(
-                              "Marcar todas como lidas",
-                              style: TextStyle(
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                        Row(
+                          children: [
+                            // Botão 1: Marcar como lidas
+                            Expanded(
+                              child: InkWell(
+                                onTap:
+                                    () => _markAllAsRead(
+                                      dialogContext,
+                                      snapshot.data!,
+                                    ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      right: BorderSide(
+                                        color: Colors.grey.shade200,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.done_all,
+                                        size: 18,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        "Ler Tudo",
+                                        style: TextStyle(
+                                          color: theme.colorScheme.primary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            // Botão 2: Limpar Tudo (Excluir)
+                            Expanded(
+                              child: InkWell(
+                                onTap:
+                                    () => _deleteAllNotifications(
+                                      dialogContext,
+                                      snapshot.data!,
+                                    ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.delete_sweep,
+                                        size: 18,
+                                        color: Colors.red.shade700,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        "Limpar",
+                                        style: TextStyle(
+                                          color: Colors.red.shade700,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                     ],
                   ),
@@ -532,6 +704,79 @@ class NotificationDropDownState extends State<NotificationDropDown> {
           },
         );
       },
+    );
+  }
+
+  // Helper para confirmação individual (reaproveitando visual)
+  Future<bool?> _showDeleteConfirmDialog(BuildContext context) {
+    final theme = Theme.of(this.context); // Usa contexto do State
+    return showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            backgroundColor: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                gradient: LinearGradient(
+                  colors: [
+                    theme.colorScheme.primary,
+                    theme.colorScheme.secondary.withValues(alpha: 0.8),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.delete_forever,
+                    size: 32,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "Excluir",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text("Cancelar"),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.red,
+                          ),
+                          child: const Text("Excluir"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
     );
   }
 }

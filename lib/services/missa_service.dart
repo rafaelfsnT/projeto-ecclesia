@@ -1,5 +1,5 @@
-// missa_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 class MissaService {
@@ -7,29 +7,10 @@ class MissaService {
     'missas',
   );
 
-  // Durações padrão (em minutos)
   final int duracaoMinutos = 60;
   final int duracaoMinutosEspecial = 90;
-
-  // Limite de missas por dia
   final int maxMissasPorDia = 3;
 
-  // -----------------------
-  // UTILITÁRIOS PÚBLICOS
-  // -----------------------
-
-  /// Deleta todas as missas (batch)
-  Future<void> deleteAllMissas() async {
-    final snapshot = await _collection.get();
-    if (snapshot.docs.isEmpty) return;
-    final batch = FirebaseFirestore.instance.batch();
-    for (var doc in snapshot.docs) {
-      batch.delete(doc.reference);
-    }
-    await batch.commit();
-  }
-
-  /// Conta quantas missas existem em um dado dia (usa apenas a data)
   Future<int> countMissasPorDia(DateTime data) async {
     final inicioDoDia = DateTime(data.year, data.month, data.day, 0, 0);
     final fimDoDia = DateTime(data.year, data.month, data.day, 23, 59, 59);
@@ -49,34 +30,16 @@ class MissaService {
     return missasDoDia.docs.length;
   }
 
-  // -----------------------
-  // CADASTRO - APIs compatíveis
-  // -----------------------
-
-  /// Compatibilidade: método simples que já existia (aceita DateTime completo)
-  Future<void> addMissa(DateTime dataHora) async {
-    final data = DateTime(dataHora.year, dataHora.month, dataHora.day);
-
-    // Limite diário
-    final count = await countMissasPorDia(data);
-    if (count >= maxMissasPorDia) {
-      throw Exception(
-        "Limite de $maxMissasPorDia missas atingido para esta data.",
-      );
+  Future<void> deleteAllMissas() async {
+    final snapshot = await _collection.get();
+    if (snapshot.docs.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (var doc in snapshot.docs) {
+      batch.delete(doc.reference);
     }
-
-    // Valida conflitos com duração padrão
-    await _validarConflitos(dataHora: dataHora, duracao: duracaoMinutos);
-
-    // Insere
-    await _collection.add({
-      "dataHora": Timestamp.fromDate(dataHora),
-      "tipo": "comum",
-      "criadoEm": FieldValue.serverTimestamp(),
-    });
+    await batch.commit();
   }
 
-  /// API mais completa usada nas views: recebe data + TimeOfDay, escala, texto etc.
   Future<void> cadastrarMissa({
     required DateTime? data,
     required TimeOfDay? hora,
@@ -84,6 +47,7 @@ class MissaService {
     required Map<String, dynamic> escala,
     required String comentario,
     required String preces,
+    required bool notificar, // [NOVO PARAMETRO]
   }) async {
     if (data == null) throw Exception("A data é obrigatória.");
     if (hora == null) throw Exception("O horário é obrigatório.");
@@ -97,7 +61,6 @@ class MissaService {
       hora.minute,
     );
 
-    // Valida conflitos (duração normal) e limite diário
     await _validarConflitos(dataHora: dataHora, duracao: duracaoMinutos);
     await _validarLimiteDiario(dataHora);
 
@@ -105,10 +68,12 @@ class MissaService {
       "dataHora": Timestamp.fromDate(dataHora),
       "local": local.trim(),
       "tipo": "comum",
+      "titulo": "Missa Comum", // Garante um título padrão
       "escala": escala,
       "comentarioInicial": comentario.trim(),
       "precesDaComunidade": preces.trim(),
       "criadoEm": FieldValue.serverTimestamp(),
+      "notificar": notificar, // [NOVO CAMPO SALVO]
     };
 
     try {
@@ -118,65 +83,6 @@ class MissaService {
     }
   }
 
-  // -----------------------
-  // MISSA ESPECIAL - CADASTRO / ATUALIZAÇÃO
-  // -----------------------
-
-  /// Versão compatível que já existia (aceita DateTime completo)
-  Future<void> addMissaEspecial({
-    required String titulo,
-    required String local,
-    required String celebrante,
-    required DateTime dataHora,
-    String observacao = '',
-    List<String> tags = const [],
-    Map<String, dynamic>? escala,
-    String? comentarioInicial,
-    String? precesDaComunidade,
-  }) async {
-    final tituloTrim = titulo.trim();
-    final celebranteTrim = celebrante.trim();
-    final localTrim = local.trim();
-    final observacaoTrim = observacao.trim();
-
-    if (tituloTrim.isEmpty || celebranteTrim.isEmpty || localTrim.isEmpty) {
-      throw Exception("Título, celebrante e local são obrigatórios.");
-    }
-
-    final data = DateTime(dataHora.year, dataHora.month, dataHora.day);
-    final count = await countMissasPorDia(data);
-    if (count >= maxMissasPorDia) {
-      throw Exception(
-        "Limite de $maxMissasPorDia missas atingido para este dia.",
-      );
-    }
-
-    await _validarConflitos(
-      dataHora: dataHora,
-      duracao: duracaoMinutosEspecial,
-    );
-
-    final cleanTags =
-        tags.map((t) => t.trim()).where((t) => t.isNotEmpty).toList();
-
-    final docData = {
-      "dataHora": Timestamp.fromDate(dataHora),
-      "titulo": tituloTrim,
-      "celebrante": celebranteTrim,
-      "local": localTrim,
-      if (observacaoTrim.isNotEmpty) "observacao": observacaoTrim,
-      "tags": cleanTags,
-      "tipo": "especial",
-      if (escala != null) "escala": escala,
-      if (comentarioInicial != null) "comentarioInicial": comentarioInicial,
-      if (precesDaComunidade != null) "precesDaComunidade": precesDaComunidade,
-      "criadoEm": FieldValue.serverTimestamp(),
-    };
-
-    await _collection.add(docData);
-  }
-
-  /// Versão usada nas views: recebe data + TimeOfDay e mais campos
   Future<void> cadastrarMissaEspecial({
     required DateTime? data,
     required TimeOfDay? hora,
@@ -188,6 +94,7 @@ class MissaService {
     required Map<String, dynamic> escala,
     required String comentarioInicial,
     required String precesDaComunidade,
+    required bool notificar, // [NOVO PARAMETRO]
   }) async {
     if (data == null) throw Exception("A data é obrigatória.");
     if (hora == null) throw Exception("O horário é obrigatório.");
@@ -230,6 +137,7 @@ class MissaService {
       "comentarioInicial": comentarioInicial.trim(),
       "precesDaComunidade": precesDaComunidade.trim(),
       "criadoEm": FieldValue.serverTimestamp(),
+      "notificar": notificar,
     };
 
     try {
@@ -239,11 +147,6 @@ class MissaService {
     }
   }
 
-  // -----------------------
-  // EDIÇÕES
-  // -----------------------
-
-  /// Edição simples quando você já tem DateTime completo (mantive compatibilidade)
   Future<void> editarMissaByDateTime({
     required String missaId,
     required DateTime novaDataHora,
@@ -275,7 +178,6 @@ class MissaService {
     await _collection.doc(missaId).update(updateData);
   }
 
-  /// Edição completa (usada nas views que enviam data + TimeOfDay e campos)
   Future<void> editarMissa({
     required String missaId,
     required DateTime novaData,
@@ -310,8 +212,6 @@ class MissaService {
     });
   }
 
-  /// Edição específica para missas especiais (recebe date + time + campos)
-  /// OBS: este método existe e exige novaData + novaHora + comentário/preces.
   Future<void> editarMissaEspecial({
     required String missaId,
     required DateTime novaData,
@@ -362,7 +262,6 @@ class MissaService {
       "atualizadoEm": FieldValue.serverTimestamp(),
     };
 
-    // Lida com observacao – remove se vazio
     if (observacao != null && observacao.trim().isNotEmpty) {
       docData["observacao"] = observacao.trim();
     } else {
@@ -376,9 +275,6 @@ class MissaService {
     }
   }
 
-  /// ----- NOVO: Alias/compatibilidade -----
-  /// Método `updateMissaEspecial` adicionado para compatibilidade com a UI
-  /// que chama exatamente esse nome e passa um único DateTime (dataHora).
   Future<void> updateMissaEspecial({
     required String missaId,
     required DateTime dataHora,
@@ -397,14 +293,12 @@ class MissaService {
       throw Exception("Título, celebrante e local são obrigatórios.");
     }
 
-    // Valida conflitos considerando duração de missa especial
     await _validarConflitos(
       dataHora: dataHora,
       missaIdAtual: missaId,
       duracao: duracaoMinutosEspecial,
     );
 
-    // Valida limite diário (não conta a missa que está sendo editada)
     await _validarLimiteDiario(dataHora, missaIdAtual: missaId);
 
     final cleanTags =
@@ -428,11 +322,6 @@ class MissaService {
     await _collection.doc(missaId).update(updateData);
   }
 
-  // -----------------------
-  // MÉTODOS PRIVADOS (VALIDAÇÕES)
-  // -----------------------
-
-  /// Valida número máximo de missas por dia (não conta a missa em edição, se passada)
   Future<void> _validarLimiteDiario(
     DateTime dataHora, {
     String? missaIdAtual,
@@ -481,20 +370,15 @@ class MissaService {
     String? missaIdAtual,
     required int duracao,
   }) async {
-    // [CORREÇÃO AQUI]
-    // Esta validação agora só roda para NOVAS missas (quando missaIdAtual é nulo)
-    // Isso permite que você edite missas que já passaram.
     if (missaIdAtual == null && dataHora.isBefore(DateTime.now())) {
       throw Exception(
         "Não é permitido cadastrar missas em datas/horários passados.",
       );
     }
 
-    // Calcula intervalo que deve estar livre
     final inicioIntervalo = dataHora.subtract(Duration(minutes: duracao));
     final fimIntervalo = dataHora.add(Duration(minutes: duracao));
 
-    // Consulta por documentos cuja dataHora esteja no intervalo (maior que inicioIntervalo e menor que fimIntervalo)
     final query =
         await _collection
             .where(
@@ -506,10 +390,23 @@ class MissaService {
 
     for (var doc in query.docs) {
       if (missaIdAtual != null && doc.id == missaIdAtual) continue;
-      // Se existir qualquer doc no intervalo, considera conflito
       throw Exception(
         "Já existe uma missa próxima a esse horário (mínimo $duracao minutos de intervalo).",
       );
+    }
+  }
+
+  // Notificar usuários
+  Future<void> notificarAgendaMensal(String nomeMes, int ano) async {
+    try {
+      final functions = FirebaseFunctions.instanceFor(
+        region: 'southamerica-east1',
+      );
+      final callable = functions.httpsCallable('notificarAgendaMensal');
+
+      await callable.call({'nomeMes': nomeMes, 'ano': ano});
+    } catch (e) {
+      throw Exception('Erro ao enviar notificação: $e');
     }
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../../app/utils/helpers/feedbacks_helper.dart';
 import '/models/evento_model.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -31,8 +32,11 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
 
   // --- LÓGICA DO LIMITE DE IMAGEM ---
   int get _totalImagens => _imagensSelecionadas.length;
+
   bool get _podeAdicionarMaisImagens => _totalImagens < _limiteMaximoImagens;
+
   int get _espacoDisponivel => _limiteMaximoImagens - _totalImagens;
+
   // --- FIM DA LÓGICA DO LIMITE ---
 
   Future<void> _selecionarImagens() async {
@@ -40,8 +44,9 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
     if (!_podeAdicionarMaisImagens) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Você já atingiu o limite de 2 imagens.'),
-            backgroundColor: Colors.red),
+          content: Text('Você já atingiu o limite de 2 imagens.'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -50,10 +55,8 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
     final pickedFiles = await picker.pickMultiImage(imageQuality: 70);
 
     if (pickedFiles.isNotEmpty && mounted) {
-      final List<File> imagensParaAdicionar = pickedFiles
-          .take(_espacoDisponivel)
-          .map((p) => File(p.path))
-          .toList();
+      final List<File> imagensParaAdicionar =
+          pickedFiles.take(_espacoDisponivel).map((p) => File(p.path)).toList();
 
       setState(() {
         _imagensSelecionadas.addAll(imagensParaAdicionar);
@@ -63,16 +66,20 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
       if (pickedFiles.length > imagensParaAdicionar.length) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text(
-                  'Limite de 2 imagens atingido. Algumas imagens não foram adicionadas.')),
+            content: Text(
+              'Limite de 2 imagens atingido. Algumas imagens não foram adicionadas.',
+            ),
+          ),
         );
       }
     }
   }
 
-
   Future<void> _salvarEvento() async {
     if (!_formKey.currentState!.validate()) return;
+
+    FocusScope.of(context).unfocus();
+
     setState(() => _isSaving = true);
 
     final viewModel = Provider.of<EventoViewModel>(context, listen: false);
@@ -89,15 +96,18 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
       await viewModel.criarEventoComImagens(novoEvento, _imagensSelecionadas);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Evento criado com sucesso')),
-      );
-      GoRouter.of(context).pop();
+
+      FeedbackHelper.showSuccess(context, 'Evento criado com sucesso!');
+
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted && context.canPop()) {
+          context.pop();
+        }
+      });
     } catch (e) {
+      String msg = e.toString();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao criar evento: ${e.toString()}')),
-        );
+        FeedbackHelper.showError(context, "Erro ao criar evento: $msg");
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -114,15 +124,18 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
 
   @override
   Widget build(BuildContext context) {
-    final dateLabel = DateFormat('dd/MM/yyyy HH:mm').format(_dataHora.toLocal());
+    final dateLabel = DateFormat(
+      'dd/MM/yyyy HH:mm',
+    ).format(_dataHora.toLocal());
     final theme = Theme.of(context);
     // --- MUDANÇA ---
     final textTheme = theme.textTheme;
 
     // Texto de ajuda para o limite de imagens
-    final String helperText = _podeAdicionarMaisImagens
-        ? 'Você pode adicionar até $_limiteMaximoImagens imagens (resta $_espacoDisponivel).'
-        : 'Limite de 2 imagens atingido.';
+    final String helperText =
+        _podeAdicionarMaisImagens
+            ? 'Você pode adicionar até $_limiteMaximoImagens imagens (resta $_espacoDisponivel).'
+            : 'Limite de 2 imagens atingido.';
     // --- FIM DA MUDANÇA ---
 
     return AppScaffold(
@@ -133,140 +146,162 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
         child: ListView(
           padding: const EdgeInsets.all(16.0),
           children: [
-            // --- UI DE IMAGEM ATUALIZADA ---
-            Container(
-              height: 140,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: _imagensSelecionadas.isEmpty
-                  ? Center(
-                child: Text(
-                  'Nenhuma imagem selecionada.',
-                  style: TextStyle(color: Colors.grey.shade600),
+                // --- UI DE IMAGEM ATUALIZADA ---
+                Container(
+                  height: 140,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child:
+                      _imagensSelecionadas.isEmpty
+                          ? Center(
+                            child: Text(
+                              'Nenhuma imagem selecionada.',
+                              style: TextStyle(color: Colors.grey.shade600),
+                            ),
+                          )
+                          : ListView.builder(
+                            padding: const EdgeInsets.all(8.0),
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _imagensSelecionadas.length,
+                            itemBuilder: (context, idx) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8.0),
+                                child: _buildImagePreview(
+                                  theme,
+                                  imageWidget: Image.file(
+                                    _imagensSelecionadas[idx],
+                                    fit: BoxFit.cover,
+                                  ),
+                                  onRemove: () {
+                                    setState(
+                                      () => _imagensSelecionadas.removeAt(idx),
+                                    );
+                                  },
+                                ),
+                              );
+                            },
+                          ),
                 ),
-              )
-                  : ListView.builder(
-                padding: const EdgeInsets.all(8.0),
-                scrollDirection: Axis.horizontal,
-                itemCount: _imagensSelecionadas.length,
-                itemBuilder: (context, idx) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: _buildImagePreview(
-                      theme,
-                      imageWidget: Image.file(_imagensSelecionadas[idx],
-                          fit: BoxFit.cover),
-                      onRemove: () {
-                        setState(
-                                () => _imagensSelecionadas.removeAt(idx));
-                      },
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  icon: const Icon(Icons.add_a_photo),
+                  label: const Text('Adicionar Imagens'),
+                  // --- MUDANÇA ---
+                  // Desabilita se o limite foi atingido
+                  onPressed:
+                      _podeAdicionarMaisImagens && !_isSaving
+                          ? _selecionarImagens
+                          : null,
+                  // --- FIM DA MUDANÇA ---
+                ),
+                // --- NOVO WIDGET DE TEXTO DE AJUDA ---
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: Text(
+                    helperText,
+                    style: textTheme.bodySmall?.copyWith(
+                      color:
+                          _podeAdicionarMaisImagens
+                              ? Colors.grey.shade600
+                              : Colors.red,
                     ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextButton.icon(
-              icon: const Icon(Icons.add_a_photo),
-              label: const Text('Adicionar Imagens'),
-              // --- MUDANÇA ---
-              // Desabilita se o limite foi atingido
-              onPressed: _podeAdicionarMaisImagens && !_isSaving
-                  ? _selecionarImagens
-                  : null,
-              // --- FIM DA MUDANÇA ---
-            ),
-            // --- NOVO WIDGET DE TEXTO DE AJUDA ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(
-                helperText,
-                style: textTheme.bodySmall?.copyWith(
-                  color: _podeAdicionarMaisImagens
-                      ? Colors.grey.shade600
-                      : Colors.red,
+                    textAlign: TextAlign.center,
+                  ),
                 ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            // --- FIM DA MUDANÇA ---
-            const SizedBox(height: 16),
-            // --- Fim da UI de Imagem ---
+                // --- FIM DA MUDANÇA ---
+                const SizedBox(height: 16),
 
-            TextFormField(
-              controller: _tituloController,
-              decoration: const InputDecoration(labelText: 'Título do Evento'),
-              validator: (v) =>
-              (v == null || v.trim().isEmpty) ? 'Informe um título.' : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _descricaoController,
-              decoration: const InputDecoration(
-                  labelText: 'Descrição', alignLabelWithHint: true),
-              maxLines: 4,
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Informe uma descrição.'
-                  : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _localController,
-              decoration: const InputDecoration(labelText: 'Local'),
-              validator: (v) =>
-              (v == null || v.trim().isEmpty) ? 'Informe o local.' : null,
-            ),
-            const SizedBox(height: 24),
-            ListTile(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade300),
-              ),
-              title: Text('Data e Hora: $dateLabel'),
-              trailing: const Icon(Icons.calendar_month),
-              onTap: () async {
-                final pickedDate = await showDatePicker(
-                  context: context,
-                  initialDate: _dataHora,
-                  firstDate: DateTime.now(),
-                  lastDate: DateTime(2101),
-                );
-                if (pickedDate != null) {
-                  final pickedTime = await showTimePicker(
-                    context: context,
-                    initialTime: TimeOfDay.fromDateTime(_dataHora),
-                  );
-                  if (pickedTime != null) {
-                    setState(() {
-                      _dataHora = DateTime(
-                        pickedDate.year,
-                        pickedDate.month,
-                        pickedDate.day,
-                        pickedTime.hour,
-                        pickedTime.minute,
+                // --- Fim da UI de Imagem ---
+                TextFormField(
+                  controller: _tituloController,
+                  decoration: const InputDecoration(
+                    labelText: 'Título do Evento',
+                  ),
+                  validator:
+                      (v) =>
+                          (v == null || v.trim().isEmpty)
+                              ? 'Informe um título.'
+                              : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _descricaoController,
+                  decoration: const InputDecoration(
+                    labelText: 'Descrição',
+                    alignLabelWithHint: true,
+                  ),
+                  maxLines: 4,
+                  validator:
+                      (v) =>
+                          (v == null || v.trim().isEmpty)
+                              ? 'Informe uma descrição.'
+                              : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _localController,
+                  decoration: const InputDecoration(labelText: 'Local'),
+                  validator:
+                      (v) =>
+                          (v == null || v.trim().isEmpty)
+                              ? 'Informe o local.'
+                              : null,
+                ),
+                const SizedBox(height: 24),
+                ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  title: Text('Data e Hora: $dateLabel'),
+                  trailing: const Icon(Icons.calendar_month),
+                  onTap: () async {
+                    final pickedDate = await showDatePicker(
+                      context: context,
+                      initialDate: _dataHora,
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime(2101),
+                    );
+                    if (pickedDate != null) {
+                      final pickedTime = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(_dataHora),
                       );
-                    });
-                  }
-                }
-              },
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: _isSaving ? null : _salvarEvento,
-              child: _isSaving
-                  ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                    strokeWidth: 3, color: Colors.white),
-              )
-                  : const Text('Salvar Evento'),
-            ),
-          ].animate(interval: 60.ms)
+                      if (pickedTime != null) {
+                        setState(() {
+                          _dataHora = DateTime(
+                            pickedDate.year,
+                            pickedDate.month,
+                            pickedDate.day,
+                            pickedTime.hour,
+                            pickedTime.minute,
+                          );
+                        });
+                      }
+                    }
+                  },
+                ),
+                const SizedBox(height: 32),
+                ElevatedButton(
+                  onPressed: _isSaving ? null : _salvarEvento,
+                  child:
+                      _isSaving
+                          ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.white,
+                            ),
+                          )
+                          : const Text('Salvar Evento'),
+                ),
+              ]
+              .animate(interval: 60.ms)
               .fadeIn(duration: 300.ms, delay: 100.ms)
               .slideY(begin: 0.2, curve: Curves.easeOut),
         ),
@@ -275,18 +310,18 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
   }
 
   // Widget auxiliar de preview
-  Widget _buildImagePreview(ThemeData theme,
-      {required Widget imageWidget, required VoidCallback onRemove}) {
+  Widget _buildImagePreview(
+    ThemeData theme, {
+    required Widget imageWidget,
+    required VoidCallback onRemove,
+  }) {
     return SizedBox(
       width: 120,
       height: 120,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: imageWidget,
-          ),
+          ClipRRect(borderRadius: BorderRadius.circular(8), child: imageWidget),
           Positioned(
             right: 4,
             top: 4,
@@ -295,8 +330,9 @@ class _AdicionarEventoPageState extends State<AdicionarEventoPage> {
               child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
-                    shape: BoxShape.circle),
+                  color: Colors.black.withValues(alpha: 0.6),
+                  shape: BoxShape.circle,
+                ),
                 child: const Icon(Icons.close, size: 16, color: Colors.white),
               ),
             ),
