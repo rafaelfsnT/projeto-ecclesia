@@ -1,3 +1,4 @@
+import 'package:app_ecclesia/services/missas_pdf_generator_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -19,7 +20,7 @@ class ListaMissasPage extends StatefulWidget {
 
 class _ListaMissasPageState extends State<ListaMissasPage> {
   final MissaService missaService = MissaService();
-
+  bool _isGeneratingPdf = false;
   bool _ordemCrescente = true;
   String _filtroTipo = 'Todos';
   int _filtroAno = DateTime.now().year;
@@ -41,8 +42,12 @@ class _ListaMissasPageState extends State<ListaMissasPage> {
       return;
     }
 
-    final nomeMes = DateFormat('MMMM', 'pt_BR').format(DateTime(_filtroAno, _filtroMes!));
-    final nomeMesCapitalizado = "${nomeMes[0].toUpperCase()}${nomeMes.substring(1)}";
+    final nomeMes = DateFormat(
+      'MMMM',
+      'pt_BR',
+    ).format(DateTime(_filtroAno, _filtroMes!));
+    final nomeMesCapitalizado =
+        "${nomeMes[0].toUpperCase()}${nomeMes.substring(1)}";
 
     showDialog(
       context: context,
@@ -55,12 +60,19 @@ class _ListaMissasPageState extends State<ListaMissasPage> {
       final inicioMes = DateTime(_filtroAno, _filtroMes!, 1);
       final fimMes = DateTime(_filtroAno, _filtroMes! + 1, 0, 23, 59, 59);
 
-      final snapshotChecagem = await FirebaseFirestore.instance
-          .collection('missas')
-          .where('dataHora', isGreaterThanOrEqualTo: Timestamp.fromDate(inicioMes))
-          .where('dataHora', isLessThanOrEqualTo: Timestamp.fromDate(fimMes))
-          .limit(1)
-          .get();
+      final snapshotChecagem =
+          await FirebaseFirestore.instance
+              .collection('missas')
+              .where(
+                'dataHora',
+                isGreaterThanOrEqualTo: Timestamp.fromDate(inicioMes),
+              )
+              .where(
+                'dataHora',
+                isLessThanOrEqualTo: Timestamp.fromDate(fimMes),
+              )
+              .limit(1)
+              .get();
 
       // Fecha o loading usando o Root Navigator
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
@@ -75,11 +87,11 @@ class _ListaMissasPageState extends State<ListaMissasPage> {
         }
         return;
       }
-
     } catch (e) {
       // Garante o fechamento do loading em caso de erro
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      if (mounted) FeedbackHelper.showError(context, "Erro ao verificar missas: $e");
+      if (mounted)
+        FeedbackHelper.showError(context, "Erro ao verificar missas: $e");
       return;
     }
 
@@ -88,25 +100,37 @@ class _ListaMissasPageState extends State<ListaMissasPage> {
 
     final confirmar = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Notificar Agenda"),
-        content: Text("Deseja enviar uma notificação para todos os usuários informando que a agenda de $nomeMesCapitalizado de $_filtroAno está disponível?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancelar")),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Enviar Agora")),
-        ],
-      ),
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text("Notificar Agenda"),
+            content: Text(
+              "Deseja enviar uma notificação para todos os usuários informando que a agenda de $nomeMesCapitalizado de $_filtroAno está disponível?",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("Cancelar"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("Enviar Agora"),
+              ),
+            ],
+          ),
     );
 
     if (confirmar != true) return;
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enviando notificações...")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Enviando notificações...")));
     }
 
     try {
       await missaService.notificarAgendaMensal(nomeMesCapitalizado, _filtroAno);
-      if (mounted) FeedbackHelper.showSuccess(context, "Aviso enviado com sucesso!");
+      if (mounted)
+        FeedbackHelper.showSuccess(context, "Aviso enviado com sucesso!");
     } catch (e) {
       if (mounted) FeedbackHelper.showError(context, "Erro: $e");
     }
@@ -275,9 +299,99 @@ class _ListaMissasPageState extends State<ListaMissasPage> {
     }
   }
 
-  // --- UI DOS FILTROS ATUALIZADA ---
+  Future<void> _exportarPDF() async {
+    // 1. Validação básica
+    if (_filtroMes == null) {
+      FeedbackHelper.showSnackBar(
+        context,
+        "Selecione um mês no filtro para gerar o relatório.",
+        isError: true,
+      );
+      return;
+    }
+
+    // [MUDANÇA] Inicia o estado de carregamento (trava o botão e mostra spinner)
+    setState(() => _isGeneratingPdf = true);
+
+    try {
+      final inicioMes = DateTime(_filtroAno, _filtroMes!, 1);
+      final fimMes = DateTime(_filtroAno, _filtroMes! + 1, 0, 23, 59, 59);
+
+      // Busca as missas
+      final snapshot =
+          await FirebaseFirestore.instance
+              .collection('missas')
+              .where(
+                'dataHora',
+                isGreaterThanOrEqualTo: Timestamp.fromDate(inicioMes),
+              )
+              .where(
+                'dataHora',
+                isLessThanOrEqualTo: Timestamp.fromDate(fimMes),
+              )
+              .orderBy('dataHora')
+              .get();
+
+      if (snapshot.docs.isEmpty) {
+        if (mounted) {
+          FeedbackHelper.showSnackBar(
+            context,
+            "Nenhuma missa encontrada neste mês.",
+            isError: true,
+          );
+        }
+        return; // O finally vai desligar o loading
+      }
+
+      // Preparação dos nomes (Mapa UID -> Nome)
+      final missasDocs = snapshot.docs;
+      final Set<String> uidsParaBuscar = {};
+
+      for (var doc in missasDocs) {
+        final escala = doc['escala'] as Map<String, dynamic>? ?? {};
+        escala.forEach((key, value) {
+          if (value != null && value is String && value.isNotEmpty) {
+            uidsParaBuscar.add(value);
+          }
+        });
+      }
+
+      final Map<String, String> mapaNomes = {};
+      if (uidsParaBuscar.isNotEmpty) {
+        for (var uid in uidsParaBuscar) {
+          final userSnap =
+              await FirebaseFirestore.instance
+                  .collection('usuarios')
+                  .doc(uid)
+                  .get();
+          if (userSnap.exists) {
+            mapaNomes[uid] = userSnap.data()?['nome'] ?? 'Sem Nome';
+          }
+        }
+      }
+
+      final nomeMes =
+          DateFormat('MMMM', 'pt_BR').format(inicioMes).toUpperCase();
+
+      // Chama o Gerador de PDF
+      await MissasPdfGeneratorService().gerarRelatorioMensal(
+        missasDocs,
+        "$nomeMes DE $_filtroAno",
+        mapaNomes,
+      );
+    } catch (e) {
+      if (mounted) {
+        FeedbackHelper.showError(context, "Erro ao gerar PDF: $e");
+      }
+    } finally {
+      // [IMPORTANTE] Desliga o loading sempre, dando certo ou errado
+      if (mounted) {
+        setState(() => _isGeneratingPdf = false);
+      }
+    }
+  }
+
   Widget _buildFilterBar(ThemeData theme) {
-    // Gera lista de anos (ex: do ano passado até +5 anos pra frente)
     final currentYear = DateTime.now().year;
     final anosDisponiveis = List.generate(
       6,
@@ -464,6 +578,11 @@ class _ListaMissasPageState extends State<ListaMissasPage> {
       showDrawer: false,
       leading: const HomeAdminButton(),
       actions: [
+        IconButton(
+          icon: const Icon(Icons.picture_as_pdf, color: Colors.purple),
+          tooltip: 'Exportar Escala PDF',
+          onPressed: _exportarPDF,
+        ),
         IconButton(
           icon: const Icon(Icons.campaign, color: Colors.blue), // Megafone
           tooltip: 'Avisar sobre Agenda do Mês',

@@ -23,7 +23,7 @@ void main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-    alert: true, // Necessário para mostrar avisos com app aberto
+    alert: true,
     badge: true,
     sound: true,
   );

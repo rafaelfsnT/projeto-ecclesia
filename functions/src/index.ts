@@ -128,6 +128,7 @@ export const deleteUser = onCall(functionOptions, async (request) => { // <-- RE
     throw new HttpsError("internal", "Ocorreu um erro ao deletar o usuário.");
   }
 });
+
 export const criarNovoUsuarioAdmin = onCall(functionOptions, async (request) => {
    console.log("Chamada recebida. Auth object:", request.auth);
      console.log("UID do usuário logado:", request.auth ? request.auth.uid : "NULO");
@@ -141,13 +142,12 @@ export const criarNovoUsuarioAdmin = onCall(functionOptions, async (request) => 
 
   await verifyIsAdmin(request.auth.uid);
 
-    // 3. Pega os dados enviados pelo app Flutter
-    // (Os dados vêm de 'request.data')
     const email = request.data.email;
     const password = request.data.password;
     const name = request.data.name;
     const categories = request.data.categories;
     const idGrupoMusical = request.data.idGrupoMusical;
+    const idGrupoCoordenado = request.data.idGrupoCoordenado;
 
     // Validação básica dos dados recebidos
     if (!email || !password || !name) {
@@ -155,7 +155,6 @@ export const criarNovoUsuarioAdmin = onCall(functionOptions, async (request) => 
     }
 
     try {
-      // 4. Cria o usuário no Firebase Authentication
       const userRecord = await admin.auth().createUser({
         email: email,
         password: password,
@@ -163,8 +162,8 @@ export const criarNovoUsuarioAdmin = onCall(functionOptions, async (request) => 
         emailVerified: false, // O usuário verifica depois, no login
       });
 
-      // 5. Cria o documento do usuário no Firestore
       const uid = userRecord.uid;
+
       await admin.firestore().collection("usuarios").doc(uid).set({
         nome: name,
         email: email,
@@ -172,17 +171,15 @@ export const criarNovoUsuarioAdmin = onCall(functionOptions, async (request) => 
         categorias: categories,
         ativo: true,
         criadoEm: admin.firestore.FieldValue.serverTimestamp(),
-        idGrupoMusical: idGrupoMusical,
+        idGrupoMusical: idGrupoMusical || null,
+        idGrupoCoordenado: idGrupoCoordenado || null,
       });
 
-      // 6. Retorna sucesso
       return { status: "success", uid: uid };
 
     } catch (error) {
-      // 7. Trata erros (ex: email já existe)
       console.error("Erro ao criar usuário:", error);
 
-      // Correção para o erro "error is of type 'unknown'"
       let errorMessage = "Ocorreu um erro ao criar o usuário.";
       if (error instanceof Error) {
         errorMessage = error.message;
@@ -192,7 +189,6 @@ export const criarNovoUsuarioAdmin = onCall(functionOptions, async (request) => 
     }
   }
 );
-
 
 export const onNewEventCreated = onDocumentCreated(
   {

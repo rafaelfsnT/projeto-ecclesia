@@ -35,14 +35,11 @@ class _HistoricoAgendamentosPageState extends State<HistoricoAgendamentosPage>
     return AppScaffold(
       title: "Histórico de Agendamentos",
       showBackButton: true,
-
-      // [CORREÇÃO]: Removemos o parâmetro 'bottom' que não existia.
-      // Agora a estrutura de abas fica dentro do 'body'.
       body: Column(
         children: [
-          // 1. O Container da TabBar (Simulando o fundo da AppBar)
+          // 1. O Container da TabBar
           Container(
-            color: theme.colorScheme.primary, // Cor igual à da AppBar
+            color: theme.colorScheme.primary,
             child: TabBar(
               controller: _tabController,
               indicatorColor: Colors.white,
@@ -56,7 +53,7 @@ class _HistoricoAgendamentosPageState extends State<HistoricoAgendamentosPage>
             ),
           ),
 
-          // 2. O Conteúdo das Abas (Expanded para ocupar o resto da tela)
+          // 2. O Conteúdo das Abas
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -87,7 +84,7 @@ class _HistoricoAgendamentosPageState extends State<HistoricoAgendamentosPage>
   }
 }
 
-// --- WIDGET DE LISTAGEM GENÉRICO (MANTIDO IGUAL) ---
+// --- WIDGET DE LISTAGEM GENÉRICO ---
 class _AgendamentosList extends StatelessWidget {
   final Query query;
   final bool isHistory;
@@ -109,7 +106,8 @@ class _AgendamentosList extends StatelessWidget {
               children: [
                 const Icon(Icons.error_outline, size: 48, color: Colors.red),
                 const SizedBox(height: 16),
-                Text("Erro ao carregar dados: ${snapshot.error}"),
+                // Text("Erro ao carregar dados: ${snapshot.error}"), // Opcional: mostrar erro técnico
+                const Text("Erro ao carregar dados."),
               ],
             ),
           );
@@ -161,7 +159,7 @@ class _AgendamentosList extends StatelessWidget {
   }
 }
 
-// --- CARD DO ITEM DE AGENDAMENTO (MANTIDO IGUAL) ---
+// --- CARD DO ITEM DE AGENDAMENTO ---
 class _AgendamentoHistoryCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final String docId;
@@ -247,6 +245,7 @@ class _AgendamentoHistoryCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      // --- CORREÇÃO AQUI ---
                       FutureBuilder<DocumentSnapshot>(
                         future: FirebaseFirestore.instance
                             .collection('usuarios')
@@ -260,8 +259,16 @@ class _AgendamentoHistoryCard extends StatelessWidget {
                               color: Colors.grey[200],
                             );
                           }
-                          final nome = snapshot.data?.get('nome') as String? ??
-                              "Usuário Desconhecido";
+
+                          String nome = "Usuário Desconhecido";
+
+                          // Verifica se tem dados E se o documento existe de fato
+                          if (snapshot.hasData && snapshot.data!.exists) {
+                            final userData = snapshot.data!.data() as Map<String, dynamic>?;
+                            nome = userData?['nome'] ?? "Sem Nome";
+                          } else if (snapshot.hasData && !snapshot.data!.exists) {
+                            nome = "Usuário Excluído";
+                          }
 
                           return Text(
                             nome,
@@ -275,6 +282,8 @@ class _AgendamentoHistoryCard extends StatelessWidget {
                           );
                         },
                       ),
+                      // ---------------------
+
                       const SizedBox(height: 6),
                       Row(
                         children: [

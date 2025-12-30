@@ -17,6 +17,7 @@ class AuthService {
     required List<String> categories,
     required String? idGrupoMusical,
     required bool isBeingCreatedByLoggedInUser,
+    String? idGrupoCoordenado,
   }) async {
     if (isBeingCreatedByLoggedInUser) {
       return await _registerByAdmin(
@@ -25,6 +26,7 @@ class AuthService {
         password: password,
         categories: categories,
         idGrupoMusical: idGrupoMusical,
+        idGrupoCoordenado: idGrupoCoordenado,
       );
     } else {
       return await _registerAsPublicUser(
@@ -33,6 +35,7 @@ class AuthService {
         password: password,
         categories: categories,
         idGrupoMusical: idGrupoMusical,
+        idGrupoCoordenado: idGrupoCoordenado,
       );
     }
   }
@@ -43,6 +46,7 @@ class AuthService {
     required String password,
     required List<String> categories,
     required String? idGrupoMusical,
+    String? idGrupoCoordenado,
   }) async {
     try {
       print("Forçando a atualização do token de autenticação...");
@@ -63,6 +67,7 @@ class AuthService {
         'name': name,
         'categories': categories,
         'idGrupoMusical': idGrupoMusical,
+        'idGrupoCoordenado': idGrupoCoordenado,
       });
 
       return null;
@@ -81,6 +86,7 @@ class AuthService {
     required String password,
     required List<String> categories,
     required String? idGrupoMusical,
+    String? idGrupoCoordenado,
   }) async {
     try {
       final cred = await _auth.createUserWithEmailAndPassword(
@@ -90,7 +96,8 @@ class AuthService {
       final user = cred.user;
 
       if (user != null) {
-        await _firestore.collection('usuarios').doc(user.uid).set({
+        // Monta o objeto de dados
+        final userData = {
           'nome': name,
           'email': email,
           'role': 'user',
@@ -98,14 +105,20 @@ class AuthService {
           'ativo': true,
           'criadoEm': FieldValue.serverTimestamp(),
           'idGrupoMusical': idGrupoMusical,
-        });
+        };
+
+        // Só adiciona o campo se não for nulo (opcional, mas mantém o banco limpo)
+        if (idGrupoCoordenado != null) {
+          userData['idGrupoCoordenado'] = idGrupoCoordenado;
+        }
+
+        await _firestore.collection('usuarios').doc(user.uid).set(userData);
       }
       return null;
     } on FirebaseAuthException catch (e) {
       return e.message ?? "Ocorreu um erro desconhecido.";
     }
   }
-
 
   Future<void> updateUserData(String uid, Map<String, dynamic> data) async {
     try {

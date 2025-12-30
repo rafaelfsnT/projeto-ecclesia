@@ -239,7 +239,7 @@ GoRouter createAppRouter(AuthNotifier authNotifier) {
         '/all-events',
         '/eventos/detalhe',
         '/agendamentos',
-        '/ajustes'
+        '/ajustes',
       ];
 
       // Verifica se não esta logado e se não é uma rota pública

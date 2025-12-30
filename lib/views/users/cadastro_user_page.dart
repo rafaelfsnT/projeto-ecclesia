@@ -17,7 +17,6 @@ class CadastroUserPage extends StatefulWidget {
 class _CadastroUserPageState extends State<CadastroUserPage> {
   final AuthService _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
-
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
@@ -27,13 +26,15 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
   bool obscurePassword = true;
   bool obscureConfirmPassword = true;
 
-  final List<String> _categorias = ['Leitor', 'Leigo'];
+  final List<String> _categorias = ['Leitor', 'Coordenador'];
   final Map<String, bool> _categoriasSelecionadas = {};
 
   bool? _participaDeGrupo;
   List<DocumentSnapshot> _gruposMusicais = [];
   String? _idGrupoSelecionado;
   bool _carregandoGrupos = true;
+
+  String? _idGrupoCoordenado;
 
   @override
   void initState() {
@@ -71,7 +72,6 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
     }
   }
 
-  // --- TRADUTOR DE ERROS (Inglês -> Português) ---
   String _traduzirMensagemErro(String errorRaw) {
     final e = errorRaw.toLowerCase();
 
@@ -89,50 +89,53 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
         (e.contains('weak') || e.contains('6 characters'))) {
       return 'A senha é muito fraca. Use pelo menos 6 caracteres.';
     }
-
-    // Erros de Rede/Gerais
     if (e.contains('network') || e.contains('connection')) {
       return 'Erro de conexão. Verifique sua internet.';
     }
     if (e.contains('operation not allowed')) {
       return 'O cadastro está desabilitado temporariamente.';
     }
-
-    // Se não for nenhum conhecido, retorna o erro original limpo
     return errorRaw.replaceAll("Exception: ", "");
   }
 
   Future<void> register() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final List<String> categoriasFinais =
+    List<String> categoriasFinais =
         _categoriasSelecionadas.entries
             .where((entry) => entry.value == true)
             .map((entry) => entry.key)
             .toList();
 
     if (categoriasFinais.isEmpty) {
-      // Validação local usando FeedbackHelper (SnackBar de Erro)
-      FeedbackHelper.showSnackBar(
+      categoriasFinais.add('Leigo');
+    } else if (categoriasFinais.contains('Leitor')) {
+      if (!categoriasFinais.contains('Leigo')) {
+        categoriasFinais.add('Leigo');
+      }
+    }
+    categoriasFinais = categoriasFinais.toSet().toList();
+
+    if (categoriasFinais.contains('Coordenador') &&
+        _idGrupoCoordenado == null) {
+      FeedbackHelper.showError(
         context,
-        "Selecione pelo menos uma categoria (Ex: Leigo).",
-        isError: true,
+        'Selecione o grupo que este usuário coordena.',
       );
       return;
     }
-
     setState(() => isLoading = true);
 
     final authNotifier = context.read<AuthNotifier>();
     final bool wasAlreadyLoggedIn = authNotifier.isLoggedIn;
 
-    // Chama o serviço (que retorna string em inglês em caso de erro)
     final String? error = await _authService.registerUser(
       name: nameController.text.trim(),
       email: emailController.text.trim(),
       password: passwordController.text.trim(),
       categories: categoriasFinais,
       idGrupoMusical: _idGrupoSelecionado,
+      idGrupoCoordenado: _idGrupoCoordenado,
       isBeingCreatedByLoggedInUser: wasAlreadyLoggedIn,
     );
 
@@ -140,7 +143,6 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
       setState(() => isLoading = false);
 
       if (error == null) {
-        // SUCESSO
         if (wasAlreadyLoggedIn) {
           FeedbackHelper.showSuccess(context, 'Membro cadastrado com sucesso!');
           _limparFormulario();
@@ -148,7 +150,6 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
           context.go('/verify-email');
         }
       } else {
-        // ERRO: Traduzimos antes de mostrar
         final msgEmPortugues = _traduzirMensagemErro(error);
         FeedbackHelper.showError(context, msgEmPortugues);
       }
@@ -164,6 +165,7 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
       _categoriasSelecionadas.updateAll((key, value) => false);
       _participaDeGrupo = null;
       _idGrupoSelecionado = null;
+      _idGrupoCoordenado = null;
     });
   }
 
@@ -191,7 +193,6 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
         color: Colors.grey[50],
         child: Stack(
           children: [
-            // --- 1. FUNDO DECORATIVO ---
             Positioned(
               top: 0,
               left: 0,
@@ -317,7 +318,6 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
                                   () => setState(
                                     () => obscurePassword = !obscurePassword,
                                   ),
-                              // [VALIDAÇÃO LOCAL REFORÇADA]
                               validator: (val) {
                                 if (val == null || val.isEmpty)
                                   return 'Campo obrigatório';
@@ -372,12 +372,89 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
                                           setState(() {
                                             _categoriasSelecionadas[categoria] =
                                                 value!;
+                                            if (categoria == 'Coordenador' &&
+                                                !value) {
+                                              _idGrupoCoordenado = null;
+                                            }
                                           });
                                         },
                                       );
                                     }).toList(),
                               ),
                             ),
+
+                            if (_categoriasSelecionadas['Coordenador'] ==
+                                true) ...[
+                              const SizedBox(height: 16),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withValues(alpha: 0.05),
+                                  // Destaque visual
+                                  border: Border.all(
+                                    color: Colors.blue.withValues(alpha: 0.3),
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Qual grupo este usuário coordena?",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: theme.colorScheme.primary,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    _carregandoGrupos
+                                        ? const Center(
+                                          child: CircularProgressIndicator(),
+                                        )
+                                        : _gruposMusicais.isEmpty
+                                        ? const Text(
+                                          "Nenhum grupo encontrado para coordenar.",
+                                          style: TextStyle(color: Colors.red),
+                                        )
+                                        : DropdownButtonFormField<String>(
+                                          isExpanded: true,
+                                          initialValue: _idGrupoCoordenado,
+                                          decoration: InputDecoration(
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                  horizontal: 12,
+                                                  vertical: 0,
+                                                ),
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            filled: true,
+                                            fillColor: Colors.white,
+                                          ),
+                                          hint: const Text("Selecione o grupo"),
+                                          items:
+                                              _gruposMusicais.map((doc) {
+                                                final grupo =
+                                                    doc.data()
+                                                        as Map<String, dynamic>;
+                                                return DropdownMenuItem(
+                                                  value: doc.id,
+                                                  child: Text(
+                                                    grupo['nome'] ?? "Sem nome",
+                                                  ),
+                                                );
+                                              }).toList(),
+                                          onChanged:
+                                              (val) => setState(
+                                                () => _idGrupoCoordenado = val,
+                                              ),
+                                        ),
+                                  ],
+                                ),
+                              ),
+                            ],
 
                             const SizedBox(height: 32),
                             _buildSectionTitle(theme, "Grupo Musical"),
@@ -400,39 +477,41 @@ class _CadastroUserPageState extends State<CadastroUserPage> {
                                   Row(
                                     children: [
                                       Expanded(
-                                        child: RadioListTile<bool>(
-                                          title: const Text(
-                                            'Sim',
-                                            style: TextStyle(fontSize: 14),
-                                          ),
-                                          value: true,
-                                          activeColor:
-                                              theme.colorScheme.primary,
-                                          groupValue: _participaDeGrupo,
-                                          contentPadding: EdgeInsets.zero,
+                                        child: RadioGroup(
                                           onChanged:
                                               (val) => setState(() {
                                                 _participaDeGrupo = val;
                                                 _idGrupoSelecionado = null;
                                               }),
+                                          groupValue: _participaDeGrupo,
+                                          child: RadioListTile<bool>(
+                                            title: const Text(
+                                              'Sim',
+                                              style: TextStyle(fontSize: 14),
+                                            ),
+                                            value: true,
+                                            activeColor:
+                                                theme.colorScheme.primary,
+                                          ),
                                         ),
                                       ),
                                       Expanded(
-                                        child: RadioListTile<bool>(
-                                          title: const Text(
-                                            'Não',
-                                            style: TextStyle(fontSize: 14),
-                                          ),
-                                          value: false,
-                                          activeColor:
-                                              theme.colorScheme.primary,
-                                          groupValue: _participaDeGrupo,
-                                          contentPadding: EdgeInsets.zero,
+                                        child: RadioGroup(
                                           onChanged:
                                               (val) => setState(() {
                                                 _participaDeGrupo = val;
                                                 _idGrupoSelecionado = null;
                                               }),
+                                          groupValue: _participaDeGrupo,
+                                          child: RadioListTile<bool>(
+                                            title: const Text(
+                                              'Não',
+                                              style: TextStyle(fontSize: 14),
+                                            ),
+                                            value: false,
+                                            activeColor:
+                                                theme.colorScheme.primary,
+                                          ),
                                         ),
                                       ),
                                     ],

@@ -118,10 +118,9 @@ class AppDrawer extends StatelessWidget {
                           title: const Text(" Usuários "),
                           onTap: () => context.go('/listasU'),
                         ),
-                        // Rota corrigida do JOAO
                         ListTile(
                           leading: Icon(
-                            Icons.music_note_sharp,
+                            Icons.music_note_rounded,
                             color: theme.colorScheme.primary,
                           ),
                           title: const Text(" Grupo Musicais "),

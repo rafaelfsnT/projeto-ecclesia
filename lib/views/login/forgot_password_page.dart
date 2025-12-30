@@ -143,15 +143,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 ),
               ),
 
-              // 2. BOTÃO VOLTAR (Canto superior esquerdo)
-              Positioned(
-                top: 40,
-                left: 16,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => context.pop(),
-                ),
-              ),
 
               // 3. CARTÃO FLUTUANTE
               Positioned(
@@ -175,7 +166,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "Esqueceu?",
+                        "Esqueceu sua Senha?",
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
